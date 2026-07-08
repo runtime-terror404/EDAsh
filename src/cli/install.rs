@@ -31,6 +31,19 @@ pub async fn install(
         println!("▸ {} ({} packages)", name, requests.len());
 
         for req in &requests {
+            if let Some(existing) = lockfile.package.iter().find(|p| p.name == req.name) {
+                let pkg_dir = crate::paths::envs_dir().join(format!("_{}", req.name));
+                let already_installed = pkg_dir.exists();
+
+                if already_installed {
+                    println!("  ✓ {} {} (already installed)", existing.name, existing.version);
+                    continue;
+                } else {
+                    println!("  ○ {} (in lock, missing on disk — reinstalling)", req.name);
+                    lockfile.package.retain(|p| p.name != req.name);
+                }
+            }
+
             let (tx, mut rx) = mpsc::unbounded_channel();
 
             match install_package(req, tx.clone()) {
@@ -48,6 +61,7 @@ pub async fn install(
                         }
                     }
 
+                    lockfile.package.retain(|p| p.name != pkg.name);
                     lockfile.package.push(pkg);
                 }
                 Err(e) => {

@@ -1,3 +1,4 @@
+use crate::paths;
 use std::path::PathBuf;
 
 pub fn list(lock_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -13,16 +14,31 @@ pub fn list(lock_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    let envs_dir = paths::envs_dir();
+
+    let mut name_width = 0;
+    let mut version_width = 0;
+    for pkg in &lockfile.package {
+        name_width = name_width.max(pkg.name.len());
+        version_width = version_width.max(pkg.version.len());
+    }
+
     println!("Installed packages:");
     for pkg in &lockfile.package {
-        let channel = pkg.channel.as_deref().unwrap_or("-");
+        let pkg_dir = envs_dir.join(format!("_{}", pkg.name));
+        let status = if pkg_dir.exists() { "✓" } else { "✗ missing" };
+        let channel = pkg
+            .channel
+            .as_deref()
+            .map(|c| format!("{}::{}", pkg.backend, c))
+            .unwrap_or_else(|| pkg.backend.clone());
+
         println!(
-            "  {}  {}  [{}::{}]  sha256:{}",
+            "  {:name_width$}  {:version_width$}  {channel}  {status}",
             pkg.name,
             pkg.version,
-            pkg.backend,
-            channel,
-            &pkg.sha256[..8.min(pkg.sha256.len())]
+            name_width = name_width,
+            version_width = version_width,
         );
     }
 

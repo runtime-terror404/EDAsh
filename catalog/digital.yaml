@@ -6,8 +6,8 @@ tools:
     klayout,
     magic,
     netgen,
-    opensta,
     verilator,
     gtkwave,
     iverilog,
   ]
+# opensta: bundled inside openroad (sta binary), not a separate install

@@ -13,7 +13,7 @@ pub fn verify_package(pkg: &LockedPackage, install_path: &Path) -> Result<bool, 
     Ok(actual_hash == pkg.sha256)
 }
 
-fn hash_dir(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+pub fn hash_dir(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let mut hasher = Sha256::new();
     hash_dir_recursive(path, &mut hasher)?;
     Ok(hex::encode(hasher.finalize()))

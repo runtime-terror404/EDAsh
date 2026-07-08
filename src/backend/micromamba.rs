@@ -32,16 +32,18 @@ impl MicromambaBackend {
         let channel = req.channel.as_deref().unwrap_or("conda-forge");
         let package = req.package.as_deref().unwrap_or(&req.name);
         let prefix = paths::envs_dir().join(format!("_{}", req.name));
-        std::fs::create_dir_all(&prefix)?;
+
+        let exists = prefix.exists() && prefix.join("conda-meta").exists();
+        let subcommand = if exists { "install" } else { "create" };
 
         let _ = progress.send(Progress::Stage(format!(
-            "{} <- {}::{}",
-            req.name, channel, package
+            "{}:{} <- {}::{}",
+            subcommand, req.name, channel, package
         )));
 
         let output = Command::new(&self.binary)
             .args([
-                "install",
+                subcommand,
                 "-c",
                 channel,
                 "-p",
@@ -60,12 +62,15 @@ impl MicromambaBackend {
 
         let version = self.query_version(&prefix, package)?;
 
+        let _ = progress.send(Progress::Stage("computing sha256".into()));
+        let sha256 = crate::lockfile::verifier::hash_dir(&prefix)?;
+
         Ok(LockedPackage {
             name: req.name.clone(),
             version,
             channel: Some(channel.to_string()),
             backend: "micromamba".to_string(),
-            sha256: String::new(),
+            sha256,
         })
     }
 

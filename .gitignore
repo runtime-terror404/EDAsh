@@ -37,7 +37,5 @@ PLAN.md
 .DS_Store
 Thumbs.db
 
-
-# Added by cargo
-
-/target
+# Test artifact (lockfiles belong in user projects, not the edash repo)
+edash.lock
