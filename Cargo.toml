@@ -1,0 +1,22 @@
+[package]
+name = "edash"
+version = "0.1.0"
+edition = "2021"
+description = "Reproducible EDA toolchain manager (rustup/pyenv semantics, for VLSI/FPGA/analog tools + PDKs)"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "2"
+dirs = "6"
+tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "macros"] }
+which = "7"
+reqwest = { version = "0.12", features = ["stream"] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,26 @@
+xschem: { backend: micromamba, channel: litex-hub, package: xschem }
+ngspice: { backend: micromamba, channel: conda-forge, package: ngspice }
+xyce:
+  {
+    backend: source,
+    repo: "https://xyce.sandia.gov/downloads/source-code/",
+    requires: [cmake, trilinos],
+    mpi: optional,
+  }
+magic: { backend: micromamba, channel: litex-hub, package: magic }
+klayout: { backend: micromamba, channel: litex-hub, package: klayout }
+netgen: { backend: micromamba, channel: litex-hub, package: netgen }
+gaw: { backend: micromamba, channel: litex-hub, package: gaw }
+yosys: { backend: micromamba, channel: litex-hub, package: yosys }
+openroad: { backend: micromamba, channel: litex-hub, package: openroad }
+opensta: { backend: micromamba, channel: litex-hub, package: opensta }
+verilator: { backend: micromamba, channel: conda-forge, package: verilator }
+gtkwave: { backend: micromamba, channel: conda-forge, package: gtkwave }
+iverilog: { backend: micromamba, channel: conda-forge, package: iverilog }
+nextpnr: { backend: oss-cad-suite }
+icestorm: { backend: oss-cad-suite }
+prjtrellis: { backend: oss-cad-suite }
+openfpgaloader: { backend: oss-cad-suite }
+sby: { backend: oss-cad-suite }
+boolector: { backend: oss-cad-suite }
+z3: { backend: oss-cad-suite }

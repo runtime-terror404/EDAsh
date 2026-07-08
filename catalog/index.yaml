@@ -1,0 +1,10 @@
+environments:
+  digital: digital.yaml
+  analog: analog.yaml
+  fpga: fpga.yaml
+  formal: formal.yaml
+
+pdks:
+  sky130: { manager: ciel, variant: sky130A }
+  gf180: { manager: ciel, variant: gf180mcuD }
+  ihp-sg13g2: { manager: open_pdks, build: source }

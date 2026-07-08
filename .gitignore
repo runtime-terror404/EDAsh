@@ -1,0 +1,43 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# IDE (device files or dirs)
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Claude Code (local only, not project code)
+.claude/
+
+# Build-time instructions, not shipped
+readme_creation.md
+CLAUDE.md
+PLAN.md
+
+# Shell dotfiles (sandbox artifacts)
+.bash_profile
+.bashrc
+.zshrc
+.zprofile
+.profile
+
+# Git config overrides (sandbox artifacts)
+.gitconfig
+.gitmodules
+
+# Misc tool configs (sandbox artifacts)
+.mcp.json
+.ripgreprc
+
+# OS
+.DS_Store
+Thumbs.db
+
+
+# Added by cargo
+
+/target

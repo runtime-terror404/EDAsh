@@ -1,0 +1,13 @@
+name: digital
+tools:
+  [
+    yosys,
+    openroad,
+    klayout,
+    magic,
+    netgen,
+    opensta,
+    verilator,
+    gtkwave,
+    iverilog,
+  ]
