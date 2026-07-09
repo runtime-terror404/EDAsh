@@ -1,4 +1,6 @@
-use crate::catalog::index::{BackendKind, CatalogIndex, EnvironmentDef, PackageRequest, ToolRegistry};
+use crate::catalog::index::{
+    BackendKind, CatalogIndex, EnvironmentDef, PackageRequest, PdkRequest, ResolvedItem, ToolRegistry,
+};
 use std::path::Path;
 
 pub struct Resolver {
@@ -26,22 +28,26 @@ impl Resolver {
         Ok(Self::new(index, tools, base_dir.to_string_lossy().to_string()))
     }
 
-    pub fn resolve(&self, name: &str) -> Result<Vec<PackageRequest>, Box<dyn std::error::Error>> {
+    pub fn resolve(&self, name: &str) -> Result<Vec<ResolvedItem>, Box<dyn std::error::Error>> {
         if let Some(env_path) = self.index.environments.get(name) {
-            return self.resolve_env(&Path::new(&self.base_dir).join(env_path));
+            return Ok(self
+                .resolve_env(&Path::new(&self.base_dir).join(env_path))?
+                .into_iter()
+                .map(ResolvedItem::Tool)
+                .collect());
         }
 
         if let Some(tool) = self.tools.get(name) {
-            return Ok(vec![self.tool_to_request(name, tool)]);
+            return Ok(vec![ResolvedItem::Tool(self.tool_to_request(name, tool))]);
         }
 
         if let Some(pdks) = &self.index.pdks {
-            if let Some(_pdk) = pdks.get(name) {
-                return Err(format!(
-                    "PDK '{}' requires ciel backend (not implemented in phase 0)",
-                    name
-                )
-                .into());
+            if let Some(pdk) = pdks.get(name) {
+                return Ok(vec![ResolvedItem::Pdk(PdkRequest {
+                    name: name.to_string(),
+                    manager: pdk.manager.clone(),
+                    variant: pdk.variant.clone(),
+                })]);
             }
         }
 

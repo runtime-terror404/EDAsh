@@ -4,6 +4,7 @@ environments:
 # fpga + formal merged into digital (oss-cad-suite covers both)
 
 pdks:
-  sky130: { manager: ciel, variant: sky130A }
+  sky130a: { manager: ciel, variant: sky130A }
+  sky130b: { manager: ciel, variant: sky130B }
   gf180: { manager: ciel, variant: gf180mcuD }
-  ihp-sg13g2: { manager: open_pdks, build: source }
+  ihp-sg13g2: { manager: ciel, variant: sg13g2 }

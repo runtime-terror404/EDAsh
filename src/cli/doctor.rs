@@ -1,3 +1,4 @@
+use crate::catalog::index::ResolvedItem;
 use crate::catalog::resolver::Resolver;
 use crate::doctor::checks;
 use crate::paths;
@@ -8,12 +9,17 @@ pub fn doctor(
     catalog_dir: &PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resolver = Resolver::load(catalog_dir)?;
-    let requests = resolver.resolve(name)?;
+    let items = resolver.resolve(name)?;
     let envs_dir = paths::envs_dir();
 
-    println!("doctor: {} ({} tools)\n", name, requests.len());
+    let tool_count = items.iter().filter(|i| matches!(i, ResolvedItem::Tool(_))).count();
+    println!("doctor: {} ({} tools)\n", name, tool_count);
 
-    for req in &requests {
+    for item in &items {
+        let req = match item {
+            ResolvedItem::Tool(req) => req,
+            ResolvedItem::Pdk(_) => continue,
+        };
         let bin_dir = match req.backend {
             crate::catalog::index::BackendKind::OssCadSuite => {
                 envs_dir.join("oss-cad-suite").join("bin")

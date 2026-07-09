@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use edash::catalog::index::{CatalogIndex, EnvironmentDef, PdkEntry, ToolEntry, ToolRegistry};
+use edash::catalog::index::{
+    CatalogIndex, EnvironmentDef, PdkEntry, ResolvedItem, ToolEntry, ToolRegistry,
+};
 use edash::catalog::resolver::Resolver;
 
 fn setup_test_catalog(tmp: &std::path::Path) -> PathBuf {
@@ -88,13 +90,17 @@ fn test_resolve_environment() {
     let catalog_dir = setup_test_catalog(tmp.path());
 
     let resolver = Resolver::load(&catalog_dir).unwrap();
-    let requests = resolver.resolve("digital").unwrap();
+    let items = resolver.resolve("digital").unwrap();
 
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].name, "yosys");
-    assert_eq!(requests[0].channel.as_deref(), Some("litex-hub"));
-    assert_eq!(requests[1].name, "ngspice");
-    assert_eq!(requests[1].channel.as_deref(), Some("conda-forge"));
+    assert_eq!(items.len(), 2);
+    let pkg = |i: usize| match &items[i] {
+        ResolvedItem::Tool(req) => req.clone(),
+        _ => panic!("expected tool"),
+    };
+    assert_eq!(pkg(0).name, "yosys");
+    assert_eq!(pkg(0).channel.as_deref(), Some("litex-hub"));
+    assert_eq!(pkg(1).name, "ngspice");
+    assert_eq!(pkg(1).channel.as_deref(), Some("conda-forge"));
 }
 
 #[test]
@@ -103,10 +109,14 @@ fn test_resolve_individual_tool() {
     let catalog_dir = setup_test_catalog(tmp.path());
 
     let resolver = Resolver::load(&catalog_dir).unwrap();
-    let requests = resolver.resolve("nextpnr").unwrap();
+    let items = resolver.resolve("nextpnr").unwrap();
 
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].name, "nextpnr");
+    assert_eq!(items.len(), 1);
+    if let ResolvedItem::Tool(req) = &items[0] {
+        assert_eq!(req.name, "nextpnr");
+    } else {
+        panic!("expected tool");
+    }
 }
 
 #[test]
@@ -121,13 +131,18 @@ fn test_resolve_unknown() {
 }
 
 #[test]
-fn test_resolve_pdk_returns_error_in_phase0() {
+fn test_resolve_pdk() {
     let tmp = tempfile::tempdir().unwrap();
     let catalog_dir = setup_test_catalog(tmp.path());
 
     let resolver = Resolver::load(&catalog_dir).unwrap();
-    let result = resolver.resolve("sky130");
+    let items = resolver.resolve("sky130").unwrap();
 
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("ciel"));
+    assert_eq!(items.len(), 1);
+    if let ResolvedItem::Pdk(pdk) = &items[0] {
+        assert_eq!(pdk.name, "sky130");
+        assert_eq!(pdk.manager, "ciel");
+    } else {
+        panic!("expected PDK");
+    }
 }

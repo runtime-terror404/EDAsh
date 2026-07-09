@@ -60,3 +60,16 @@ pub struct PackageRequest {
     pub channel: Option<String>,
     pub package: Option<String>,
 }
+
+#[derive(Debug, Clone)]
+pub struct PdkRequest {
+    pub name: String,
+    pub manager: String,
+    pub variant: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ResolvedItem {
+    Tool(PackageRequest),
+    Pdk(PdkRequest),
+}
