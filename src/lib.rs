@@ -43,6 +43,23 @@ pub enum Command {
     Doctor {
         name: String,
     },
+    Search {
+        query: String,
+    },
+    Why {
+        tool: String,
+    },
+    Outdated {},
+    Clean {
+        #[arg(short, long)]
+        dry_run: bool,
+    },
+    Cache {},
+    Export {
+        name: String,
+        #[arg(short, long)]
+        format: String,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
@@ -66,6 +83,14 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Command::Env { name }) => cli::env::env(&name, &catalog_dir),
         Some(Command::Shell { name }) => cli::shell::shell(&name, &catalog_dir),
         Some(Command::Doctor { name }) => cli::doctor::doctor(&name, &catalog_dir),
+        Some(Command::Search { query }) => cli::search::search(&query, &catalog_dir),
+        Some(Command::Why { tool }) => cli::why::why(&tool, &catalog_dir),
+        Some(Command::Outdated { .. }) => cli::outdated::outdated(&lock_path),
+        Some(Command::Clean { dry_run }) => cli::clean::clean(&lock_path, dry_run),
+        Some(Command::Cache { .. }) => cli::clean::cache(),
+        Some(Command::Export { name, format }) => {
+            cli::export::export(&name, &format, &catalog_dir)
+        }
         None => {
             println!("edash — reproducible EDA toolchain manager");
             println!("Usage: edash <command>");

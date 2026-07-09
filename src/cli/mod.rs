@@ -1,7 +1,12 @@
+pub mod clean;
 pub mod doctor;
 pub mod env;
+pub mod export;
 pub mod install;
 pub mod list;
+pub mod outdated;
 pub mod remove;
+pub mod search;
 pub mod shell;
 pub mod verify;
+pub mod why;

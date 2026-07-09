@@ -86,6 +86,21 @@ impl Resolver {
         }
     }
 
+    pub fn which_envs(&self, tool: &str) -> Vec<String> {
+        let mut envs = Vec::new();
+        for (env_name, env_path) in &self.index.environments {
+            let full_path = Path::new(&self.base_dir).join(env_path);
+            if let Ok(content) = std::fs::read_to_string(&full_path) {
+                if let Ok(env) = serde_yaml::from_str::<EnvironmentDef>(&content) {
+                    if env.tools.iter().any(|t| t == tool) {
+                        envs.push(env_name.clone());
+                    }
+                }
+            }
+        }
+        envs
+    }
+
     pub fn list_environments(&self) -> Vec<String> {
         self.index.environments.keys().cloned().collect()
     }
