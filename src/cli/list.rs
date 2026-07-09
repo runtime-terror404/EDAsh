@@ -25,8 +25,12 @@ pub fn list(lock_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Installed packages:");
     for pkg in &lockfile.package {
-        let pkg_dir = envs_dir.join(format!("_{}", pkg.name));
-        let status = if pkg_dir.exists() { "✓" } else { "✗ missing" };
+        let present = if pkg.backend == "oss-cad-suite" {
+            envs_dir.join("oss-cad-suite").join("environment").exists()
+        } else {
+            envs_dir.join(format!("_{}", pkg.name)).exists()
+        };
+        let status = if present { "✓" } else { "✗ missing" };
         let channel = pkg
             .channel
             .as_deref()

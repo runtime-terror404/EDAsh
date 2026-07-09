@@ -1,8 +1,7 @@
 environments:
   digital: digital.yaml
   analog: analog.yaml
-  fpga: fpga.yaml
-  formal: formal.yaml
+# fpga + formal merged into digital (oss-cad-suite covers both)
 
 pdks:
   sky130: { manager: ciel, variant: sky130A }

@@ -1,2 +1,0 @@
-name: formal
-tools: [yosys, sby, boolector, z3]

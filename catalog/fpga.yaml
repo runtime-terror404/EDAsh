@@ -1,2 +1,0 @@
-name: fpga
-tools: [yosys, nextpnr, icestorm, prjtrellis, openfpgaloader, gtkwave]

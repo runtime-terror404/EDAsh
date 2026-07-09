@@ -95,13 +95,6 @@ fn install_package(
         }
         BackendKind::OssCadSuite => {
             let backend = crate::backend::oss_cad_suite::OssCadSuiteBackend::new();
-            if !backend.is_installed() {
-                return Err(
-                    "oss-cad-suite not installed (~1.5GB download). Install manually:\n  \
-                     curl -L https://github.com/YosysHQ/oss-cad-suite-build/releases/latest/download/oss-cad-suite-linux-x64.tar.xz | tar -xJ"
-                        .into(),
-                );
-            }
             backend.install_package(req, progress)
         }
         BackendKind::Source => Err("source backend not available until phase 3".into()),

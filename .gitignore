@@ -39,3 +39,6 @@ Thumbs.db
 
 # Test artifact (lockfiles belong in user projects, not the edash repo)
 edash.lock
+
+# Scrapped files (kept for reference, not in the project)
+scrap/

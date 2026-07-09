@@ -1,8 +1,12 @@
-use crate::backend::{Backend, ProgressTx, ResolvedPackage};
+use crate::backend::{Backend, Progress, ProgressTx, ResolvedPackage};
 use crate::catalog::index::PackageRequest;
 use crate::lockfile::schema::LockedPackage;
 use crate::paths;
 use std::path::PathBuf;
+use std::process::Command;
+
+const API_URL: &str =
+    "https://api.github.com/repos/YosysHQ/oss-cad-suite-build/releases/latest";
 
 pub struct OssCadSuiteBackend {
     install_dir: PathBuf,
@@ -16,20 +20,37 @@ impl OssCadSuiteBackend {
     }
 
     pub fn is_installed(&self) -> bool {
-        self.install_dir.exists() && self.install_dir.join("environment").exists()
+        self.install_dir.join("environment").exists()
+    }
+
+    fn latest_download_url() -> Result<String, Box<dyn std::error::Error>> {
+        let output = Command::new("curl")
+            .args(["-s", API_URL])
+            .output()
+            .map_err(|e| format!("curl failed: {e}"))?;
+
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| format!("api parse: {e}"))?;
+
+        let tag = json["tag_name"]
+            .as_str()
+            .ok_or("no tag_name in release api")?;
+
+        let date_stripped = tag.replace('-', "");
+        let filename = format!("oss-cad-suite-linux-x64-{date_stripped}.tgz");
+        let url = format!(
+            "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/{tag}/{filename}"
+        );
+        Ok(url)
     }
 
     pub fn install_package(
         &self,
         req: &PackageRequest,
-        _progress: ProgressTx,
+        progress: ProgressTx,
     ) -> Result<LockedPackage, Box<dyn std::error::Error>> {
         if !self.is_installed() {
-            return Err(
-                "oss-cad-suite not installed. Download from:\n  \
-                 https://github.com/YosysHQ/oss-cad-suite-build/releases/latest"
-                    .into(),
-            );
+            self.download_and_extract(&progress)?;
         }
 
         Ok(LockedPackage {
@@ -39,6 +60,58 @@ impl OssCadSuiteBackend {
             backend: "oss-cad-suite".to_string(),
             sha256: String::new(),
         })
+    }
+
+    fn download_and_extract(
+        &self,
+        progress: &ProgressTx,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let url = Self::latest_download_url()?;
+        let cache_dir = paths::cache_dir();
+        std::fs::create_dir_all(&cache_dir)?;
+
+        let filename = url.rsplit('/').next().unwrap_or("oss-cad-suite.tgz");
+        let cache_path = cache_dir.join(filename);
+
+        if !cache_path.exists() {
+            let _ = progress.send(Progress::Stage("downloading oss-cad-suite (~1.5GB)".into()));
+
+            let status = Command::new("curl")
+                .args([
+                    "-L",
+                    "--progress-bar",
+                    "-o",
+                    &cache_path.to_string_lossy(),
+                    &url,
+                ])
+                .status()
+                .map_err(|e| format!("curl failed: {e}"))?;
+
+            if !status.success() {
+                let _ = std::fs::remove_file(&cache_path);
+                return Err("oss-cad-suite download failed".into());
+            }
+        }
+
+        let _ = progress.send(Progress::Stage("extracting oss-cad-suite".into()));
+        std::fs::create_dir_all(&self.install_dir)?;
+
+        let status = Command::new("tar")
+            .args([
+                "-xzf",
+                &cache_path.to_string_lossy(),
+                "-C",
+                &self.install_dir.to_string_lossy(),
+                "--strip-components=1",
+            ])
+            .status()
+            .map_err(|e| format!("tar failed: {e}"))?;
+
+        if !status.success() {
+            return Err("oss-cad-suite extraction failed".into());
+        }
+
+        Ok(())
     }
 }
 

@@ -1,22 +1,21 @@
+# Analog tools — micromamba
 xschem: { backend: micromamba, channel: litex-hub, package: xschem }
 ngspice: { backend: micromamba, channel: conda-forge, package: ngspice }
-xyce:
-  {
-    backend: source,
-    repo: "https://xyce.sandia.gov/downloads/source-code/",
-    requires: [cmake, trilinos],
-    mpi: optional,
-  }
+xyce: { backend: micromamba, channel: vlsida-eda, package: xyce }
+gaw: { backend: micromamba, channel: edash, package: gaw }
+
+# ASIC backend tools — micromamba (not in oss-cad-suite)
+openroad: { backend: micromamba, channel: litex-hub, package: openroad }
 magic: { backend: micromamba, channel: litex-hub, package: magic }
 klayout: { backend: micromamba, channel: vlsida-eda, package: klayout }
 netgen: { backend: micromamba, channel: litex-hub, package: netgen }
-gaw: { backend: micromamba, channel: litex-hub, package: gaw }
-yosys: { backend: micromamba, channel: litex-hub, package: yosys }
-openroad: { backend: micromamba, channel: litex-hub, package: openroad }
 # opensta: bundled inside openroad (sta binary); not a separate package
-verilator: { backend: micromamba, channel: conda-forge, package: verilator }
-gtkwave: { backend: micromamba, channel: conda-forge, package: gtkwave }
-iverilog: { backend: micromamba, channel: conda-forge, package: iverilog }
+
+# Synthesis, simulation, FPGA, formal — oss-cad-suite tarball
+yosys: { backend: oss-cad-suite }
+gtkwave: { backend: oss-cad-suite }
+iverilog: { backend: oss-cad-suite }
+verilator: { backend: oss-cad-suite }
 nextpnr: { backend: oss-cad-suite }
 icestorm: { backend: oss-cad-suite }
 prjtrellis: { backend: oss-cad-suite }

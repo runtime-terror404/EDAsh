@@ -1,13 +1,24 @@
 name: digital
 tools:
   [
-    yosys,
+    # ASIC backend (micromamba)
     openroad,
     klayout,
     magic,
     netgen,
-    verilator,
+    # Synthesis & simulation (oss-cad-suite)
+    yosys,
     gtkwave,
     iverilog,
+    verilator,
+    # FPGA (oss-cad-suite)
+    nextpnr,
+    icestorm,
+    prjtrellis,
+    openfpgaloader,
+    # Formal (oss-cad-suite)
+    sby,
+    boolector,
+    z3,
   ]
-# opensta: bundled inside openroad (sta binary), not a separate install
+# opensta: bundled inside openroad (sta binary)
