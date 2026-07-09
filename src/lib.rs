@@ -7,6 +7,7 @@ pub mod lockfile;
 pub mod manifest;
 pub mod paths;
 pub mod pdk;
+pub mod tui;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
