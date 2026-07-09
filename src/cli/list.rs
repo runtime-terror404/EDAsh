@@ -30,7 +30,11 @@ pub fn list(lock_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             envs_dir.join(format!("_{}", pkg.name)).exists()
         };
-        let status = if present { "✓" } else { "✗ missing" };
+        let status = if present {
+            if pkg.sha256.is_empty() { "✓" } else { "✓ verified" }
+        } else {
+            "✗ missing"
+        };
         let channel = pkg
             .channel
             .as_deref()

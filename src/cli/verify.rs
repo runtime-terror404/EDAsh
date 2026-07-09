@@ -1,4 +1,4 @@
-use crate::lockfile::verifier::verify_all;
+use crate::lockfile::verifier::hash_dir;
 use crate::paths;
 use std::path::PathBuf;
 
@@ -11,31 +11,52 @@ pub fn verify(
         return Ok(());
     }
 
-    let lockfile = crate::lockfile::writer::read_lockfile(lock_path)?;
+    let mut lockfile = crate::lockfile::writer::read_lockfile(lock_path)?;
 
     if lockfile.package.is_empty() {
         println!("Nothing to verify (no packages in lock)");
         return Ok(());
     }
 
-    let results = verify_all(&lockfile.package, &paths::envs_dir())?;
+    let envs_dir = paths::envs_dir();
+    let mut ok = 0;
+    let mut fail = 0;
+    let mut updated = 0;
 
-    let ok_count = results.iter().filter(|r| r.ok).count();
-    let fail_count = results.len() - ok_count;
-
-    for r in &results {
-        if r.ok {
-            println!("  ✓ {}  sha256:{}", r.name, &r.expected_hash[..8.min(r.expected_hash.len())]);
+    for pkg in &mut lockfile.package {
+        let pkg_dir = if pkg.backend == "oss-cad-suite" {
+            envs_dir.join("oss-cad-suite")
         } else {
-            println!("  ✗ {}  expected sha256:{}  (missing or corrupted)", r.name, &r.expected_hash[..8.min(r.expected_hash.len())]);
+            envs_dir.join(format!("_{}", pkg.name))
+        };
+
+        if !pkg_dir.exists() {
+            println!("  ✗ {} (missing)", pkg.name);
+            fail += 1;
+            continue;
         }
+
+        let actual = hash_dir(&pkg_dir)?;
+
+        if pkg.sha256.is_empty() {
+            // First verify — compute and store
+            pkg.sha256 = actual;
+            println!("  ✓ {} {}", pkg.name, &pkg.sha256[..8.min(pkg.sha256.len())]);
+            updated += 1;
+        } else if actual == pkg.sha256 {
+            println!("  ✓ {} (verified)", pkg.name);
+        } else {
+            println!("  ✗ {} (hash mismatch)", pkg.name);
+            fail += 1;
+            continue;
+        }
+        ok += 1;
     }
 
-    println!(
-        "{} passed, {} failed",
-        ok_count,
-        fail_count
-    );
+    if updated > 0 {
+        crate::lockfile::writer::write_lockfile(&lockfile, lock_path)?;
+    }
 
+    println!("{} passed, {} failed", ok, fail);
     Ok(())
 }

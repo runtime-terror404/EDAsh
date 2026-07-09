@@ -2,6 +2,7 @@ pub mod backend;
 pub mod catalog;
 pub mod cli;
 pub mod config;
+pub mod doctor;
 pub mod lockfile;
 pub mod manifest;
 pub mod paths;
@@ -32,6 +33,15 @@ pub enum Command {
     Remove {
         names: Vec<String>,
     },
+    Env {
+        name: String,
+    },
+    Shell {
+        name: String,
+    },
+    Doctor {
+        name: String,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
@@ -52,10 +62,13 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Command::List { .. }) => cli::list::list(&lock_path),
         Some(Command::Verify { verbose }) => cli::verify::verify(&lock_path, verbose),
         Some(Command::Remove { names }) => cli::remove::remove(&names, &lock_path),
+        Some(Command::Env { name }) => cli::env::env(&name, &catalog_dir),
+        Some(Command::Shell { name }) => cli::shell::shell(&name, &catalog_dir),
+        Some(Command::Doctor { name }) => cli::doctor::doctor(&name, &catalog_dir),
         None => {
             println!("edash — reproducible EDA toolchain manager");
             println!("Usage: edash <command>");
-            println!("Commands: install, list, verify, remove");
+            println!("Commands: install, list, verify, remove, env, shell");
             println!("Run 'edash help' for details.");
             Ok(())
         }

@@ -62,15 +62,12 @@ impl MicromambaBackend {
 
         let version = self.query_version(&prefix, package)?;
 
-        let _ = progress.send(Progress::Stage("computing sha256".into()));
-        let sha256 = crate::lockfile::verifier::hash_dir(&prefix)?;
-
         Ok(LockedPackage {
             name: req.name.clone(),
             version,
             channel: Some(channel.to_string()),
             backend: "micromamba".to_string(),
-            sha256,
+            sha256: String::new(),
         })
     }
 
