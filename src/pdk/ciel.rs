@@ -27,7 +27,7 @@ pub fn resolve_and_install(
         .ok_or("no remote versions found for PDK")?;
 
     // Fetch
-    let status = Command::new("ciel")
+    let output = Command::new("ciel")
         .args([
             "fetch",
             "--pdk-family",
@@ -36,15 +36,16 @@ pub fn resolve_and_install(
             &pdk_root.to_string_lossy(),
             latest,
         ])
-        .status()
+        .output()
         .map_err(|e| format!("ciel fetch: {e}"))?;
 
-    if !status.success() {
-        return Err("ciel fetch failed".into());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ciel fetch failed: {}", stderr).into());
     }
 
     // Enable
-    let status = Command::new("ciel")
+    let output = Command::new("ciel")
         .args([
             "enable",
             "--pdk-family",
@@ -53,11 +54,12 @@ pub fn resolve_and_install(
             &pdk_root.to_string_lossy(),
             latest,
         ])
-        .status()
+        .output()
         .map_err(|e| format!("ciel enable: {e}"))?;
 
-    if !status.success() {
-        return Err("ciel enable failed".into());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ciel enable failed: {}", stderr).into());
     }
 
     Ok(LockedPdk {

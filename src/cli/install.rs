@@ -11,7 +11,7 @@ pub async fn install(
     catalog_dir: &PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resolver = Resolver::load(catalog_dir)?;
-    let lock_path = std::env::current_dir()?.join("edash.lock");
+    let lock_path = crate::paths::lockfile_path();
 
     let mut lockfile = if lock_path.exists() {
         crate::lockfile::writer::read_lockfile(&lock_path).unwrap_or_else(|_| Lockfile::new())

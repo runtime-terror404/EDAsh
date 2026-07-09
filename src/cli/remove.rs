@@ -7,7 +7,7 @@ pub fn remove(
     lock_path: &PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !lock_path.exists() {
-        println!("Nothing to remove (edash.lock not found)");
+        println!("Nothing to remove (no lockfile found)");
         return Ok(());
     }
 

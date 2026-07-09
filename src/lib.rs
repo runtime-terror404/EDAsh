@@ -70,9 +70,7 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("catalog"))
     });
 
-    let lock_path = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("edash.lock");
+    let lock_path = crate::paths::lockfile_path();
 
     match cli.command {
         Some(Command::Install { names }) => {

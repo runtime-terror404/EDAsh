@@ -31,3 +31,7 @@ pub fn bin_dir() -> PathBuf {
 pub fn logs_dir() -> PathBuf {
     data_dir().join("logs")
 }
+
+pub fn lockfile_path() -> PathBuf {
+    data_dir().join("edash.lock")
+}

@@ -1,110 +1,135 @@
-mod widgets;
+mod screens;
+mod overlays;
 
 use crate::catalog::resolver::Resolver;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders};
 use ratatui::{Frame, Terminal};
+use screens::catalog::{CatalogAction, CatalogScreen, DownloadItem};
+use std::collections::HashSet;
 use std::io::stdout;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
-// ── palette ──────────────────────────────────────────────────────────────────
-const CYAN: Color = Color::Rgb(80, 180, 200);
-const GRAY: Color = Color::Rgb(100, 100, 100);
+enum Overlay { Help }
 
-// ── app state ────────────────────────────────────────────────────────────────
 struct App {
     resolver: Resolver,
-    envs: Vec<String>,
-    tools: Vec<(String, String)>,  // name, version
-    sel_env: usize,
-    sel_tool: usize,
-    focus: Focus,                  // which area has keyboard focus
-    mode: Mode,                    // what we're doing
-    search_query: String,
-    search_results: Vec<(String, String)>,  // name, kind
-    search_cursor: usize,
-    toast: String,
+    catalog: CatalogScreen,
+    overlay: Option<Overlay>,
+    quit: bool,
+    msg: String,
+    msg_ticks: u8,
+    progress_rx: Option<std::sync::mpsc::Receiver<ProgressEvent>>,
+    downloads: Arc<Mutex<Vec<DownloadItem>>>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Focus { Sidebar, Content }
+#[derive(Debug, Clone)]
+struct ProgressEvent {
+    tool: String,
+    stage: String,
+    done: bool,
+    error: Option<String>,
+}
 
-#[derive(PartialEq)]
-enum Mode {
-    Browse,           // normal dashboard
-    SearchEditing,    // search bar has focus, typing
-    SearchBrowsing,   // search results visible, can navigate
-    Help,
-    Quit,
+fn resolve_tool_names(resolver: &Resolver, env_name: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(items) = resolver.resolve(env_name) {
+        let mut seen = HashSet::new();
+        for item in &items {
+            if let crate::catalog::index::ResolvedItem::Tool(r) = item {
+                if seen.insert(r.name.clone()) {
+                    names.push(r.name.clone());
+                }
+            }
+        }
+    }
+    names
 }
 
 impl App {
     fn new(catalog_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         let resolver = Resolver::load(&catalog_dir)?;
         let envs = resolver.list_environments();
-        let mut app = Self {
+        let mut catalog = CatalogScreen::new(envs);
+        catalog.rebuild_sidebar();
+        let names = resolve_tool_names(&resolver, &resolver.list_environments()[0]);
+        catalog.refresh_tools(names);
+        catalog.load_lockfile();
+        Ok(Self {
             resolver,
-            envs,
-            tools: Vec::new(),
-            sel_env: 0,
-            sel_tool: 0,
-            focus: Focus::Sidebar,
-            mode: Mode::Browse,
-            search_query: String::new(),
-            search_results: Vec::new(),
-            search_cursor: 0,
-            toast: String::new(),
-        };
-        app.refresh_tools();
-        Ok(app)
-    }
-
-    fn refresh_tools(&mut self) {
-        self.tools.clear();
-        if self.envs.is_empty() { return; }
-        let env = &self.envs[self.sel_env].clone();
-        if let Ok(items) = self.resolver.resolve(env) {
-            self.tools = items
-                .iter()
-                .filter_map(|item| match item {
-                    crate::catalog::index::ResolvedItem::Tool(r) => {
-                        Some((r.name.clone(), "—".into()))
-                    }
-                    _ => None,
-                })
-                .collect();
-        }
-    }
-
-    fn selected_env_name(&self) -> &str {
-        self.envs.get(self.sel_env).map(|s| s.as_str()).unwrap_or("")
+            catalog,
+            overlay: None,
+            quit: false,
+            msg: String::new(),
+            msg_ticks: 0,
+            progress_rx: None,
+            downloads: Arc::new(Mutex::new(Vec::new())),
+        })
     }
 }
 
-// ── entry ────────────────────────────────────────────────────────────────────
 pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = App::new(catalog_dir)?;
+    let mut app = App::new(catalog_dir.clone())?;
     enable_raw_mode()?;
     let mut out = stdout();
     out.execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(out);
     let mut terminal = Terminal::new(backend)?;
 
+    let mut tick: u64 = 0;
     loop {
-        terminal.draw(|f| render(f, &app))?;
-        if app.mode == Mode::Quit { break; }
+        tick += 1;
+
+        // Drain progress events from background threads
+        if let Some(ref rx) = app.progress_rx {
+            let mut has_active = false;
+            while let Ok(ev) = rx.try_recv() {
+                if let Ok(mut dls) = app.downloads.lock() {
+                    if let Some(dl) = dls.iter_mut().find(|d| d.name == ev.tool) {
+                        dl.stage = ev.stage.clone();
+                        dl.progress = if ev.done { 100 } else { dl.progress.saturating_add(3).min(95) };
+                        dl.done_ticks = if ev.done { 60 } else { 0 };
+                    } else if !ev.done {
+                        dls.push(DownloadItem { name: ev.tool.clone(), progress: 5, stage: ev.stage, done_ticks: 0 });
+                    }
+                }
+                if !ev.done { has_active = true; }
+                if ev.done && ev.error.is_none() {
+                    // Reload lockfile after successful install
+                    app.catalog.load_lockfile();
+                }
+            }
+        }
+
+        // Update downloads: count down done_ticks, remove expired
+        if let Ok(mut dls) = app.downloads.lock() {
+            dls.retain(|dl| dl.done_ticks > 0 || dl.progress < 100);
+            for dl in dls.iter_mut() {
+                if dl.done_ticks > 0 { dl.done_ticks -= 1; }
+            }
+        }
+
+        // Sync to catalog
+        if let Ok(dls) = app.downloads.lock() {
+            app.catalog.downloads = dls.clone();
+        }
+        app.catalog.rebuild_sidebar();
+        // Reload lockfile periodically to pick up changes
+        if tick % 5 == 0 {
+            app.catalog.load_lockfile();
+        }
+
+        terminal.draw(|f| render(f, &mut app))?;
+        if app.quit { break; }
         if !crossterm::event::poll(std::time::Duration::from_millis(100))? { continue; }
         if let Event::Key(key) = crossterm::event::read()? {
             if key.kind == KeyEventKind::Release { continue; }
-            handle(&mut app, key.code);
+            handle(&mut app, key.code, &catalog_dir);
         }
     }
 
@@ -113,407 +138,254 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// ── keyboard ─────────────────────────────────────────────────────────────────
-fn handle(app: &mut App, code: KeyCode) {
-    app.toast.clear();
+fn handle(app: &mut App, code: KeyCode, catalog_dir: &PathBuf) {
+    if code == KeyCode::Char('q') && app.overlay.is_none() { app.quit = true; return; }
+    if let Some(Overlay::Help) = app.overlay { app.overlay = None; return; }
+    if code == KeyCode::Char('?') { app.overlay = Some(Overlay::Help); return; }
 
-    // q always quits from any mode
-    if code == KeyCode::Char('q') {
-        app.mode = Mode::Quit;
-        return;
+    let prev_idx = app.catalog.sidebar_idx;
+    let action = app.catalog.handle(code);
+    if app.catalog.sidebar_idx != prev_idx {
+        if let Some(env) = app.catalog.selected_env_name() {
+            let names = resolve_tool_names(&app.resolver, &env);
+            app.catalog.refresh_tools(names);
+        }
     }
 
-    // ? always toggles help
-    if app.mode != Mode::Help && app.mode != Mode::Quit && code == KeyCode::Char('?') {
-        app.mode = Mode::Help;
-        return;
-    }
-
-    match app.mode {
-        Mode::Browse => handle_browse(app, code),
-        Mode::SearchEditing => handle_search_edit(app, code),
-        Mode::SearchBrowsing => handle_search_browse(app, code),
-        Mode::Help => app.mode = Mode::Browse,
-        Mode::Quit => {}
-    }
-}
-
-// ── browse mode (dashboard) ──────────────────────────────────────────────────
-fn handle_browse(app: &mut App, code: KeyCode) {
-    match code {
-        // Navigation
-        KeyCode::Down | KeyCode::Char('j') => {
-            match app.focus {
-                Focus::Sidebar => {
-                    if !app.envs.is_empty() {
-                        app.sel_env = (app.sel_env + 1) % app.envs.len();
-                        app.refresh_tools();
-                        app.sel_tool = 0;
-                    }
+    if let Some(action) = action {
+        match action {
+            CatalogAction::InstallEnv(name) => {
+                app.msg = format!("Installing {}...", name);
+                app.msg_ticks = 80;
+                // Add all child tools to downloads instead of env name
+                let tool_names = resolve_tool_names(&app.resolver, &name);
+                for t in &tool_names {
+                    app.downloads.lock().unwrap().push(DownloadItem {
+                        name: t.clone(), progress: 0, stage: "queued".into(), done_ticks: 0
+                    });
                 }
-                Focus::Content => {
-                    if !app.tools.is_empty() {
-                        app.sel_tool = (app.sel_tool + 1) % app.tools.len();
-                    }
-                }
+                app.catalog.downloads = app.downloads.lock().unwrap().clone();
+                app.catalog.rebuild_sidebar();
+                spawn_install(app, &name, catalog_dir);
             }
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            match app.focus {
-                Focus::Sidebar => {
-                    if !app.envs.is_empty() {
-                        app.sel_env = app.sel_env.checked_sub(1).unwrap_or(app.envs.len() - 1);
-                        app.refresh_tools();
-                        app.sel_tool = 0;
-                    }
-                }
-                Focus::Content => {
-                    if !app.tools.is_empty() {
-                        app.sel_tool = app.sel_tool.checked_sub(1).unwrap_or(app.tools.len() - 1);
-                    }
-                }
+            CatalogAction::InstallTool(name) => {
+                app.msg = format!("Installing {}...", name);
+                app.msg_ticks = 80;
+                spawn_install(app, &name, catalog_dir);
             }
-        }
-
-        // Switch pane
-        KeyCode::Right | KeyCode::Char('l') => app.focus = Focus::Content,
-        KeyCode::Left | KeyCode::Char('h') => app.focus = Focus::Sidebar,
-        KeyCode::Tab => {
-            app.focus = match app.focus {
-                Focus::Sidebar => Focus::Content,
-                Focus::Content => Focus::Sidebar,
-            };
-        }
-
-        // Open search
-        KeyCode::Char('/') => {
-            app.search_query.clear();
-            app.search_results.clear();
-            app.search_cursor = 0;
-            app.mode = Mode::SearchEditing;
-        }
-
-        // Actions on selection
-        KeyCode::Enter | KeyCode::Char('i') => {
-            match app.focus {
-                Focus::Sidebar => {
-                    // Open env → move focus to content
-                    app.focus = Focus::Content;
-                    app.sel_tool = 0;
-                }
-                Focus::Content => {
-                    // Install selected tool
-                    if let Some((name, _)) = app.tools.get(app.sel_tool) {
-                        app.toast = format!("Run: edash install {}", name);
+            CatalogAction::InstallPdk(name) => {
+                app.msg = format!("Installing PDK {}...", name);
+                app.msg_ticks = 80;
+                spawn_pdk_install(app, &name, catalog_dir);
+            }
+            CatalogAction::RemoveEnv(name) => {
+                let lock_path = crate::paths::lockfile_path();
+                if lock_path.exists() {
+                    if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
+                        let tool_names = resolve_tool_names(&app.resolver, &name);
+                        let mut has_oss = false;
+                        for t in &tool_names {
+                            let pkg_dir = crate::paths::envs_dir().join(format!("_{}", t));
+                            if pkg_dir.exists() {
+                                let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pkg_dir.to_string_lossy()]).status();
+                                let _ = std::fs::remove_dir_all(&pkg_dir);
+                            }
+                            // Check if this tool is oss-cad-suite
+                            if lf.package.iter().any(|p| p.name == *t && p.backend == "oss-cad-suite") {
+                                has_oss = true;
+                            }
+                        }
+                        if has_oss {
+                            let oss_dir = crate::paths::envs_dir().join("oss-cad-suite");
+                            if oss_dir.exists() {
+                                let _ = std::process::Command::new("chmod").args(["-R", "u+w", &oss_dir.to_string_lossy()]).status();
+                                let _ = std::fs::remove_dir_all(&oss_dir);
+                            }
+                        }
+                        lf.package.retain(|p| !tool_names.contains(&p.name));
+                        let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
+                        app.catalog.load_lockfile();
+                        app.msg = format!("Removed {} ({} tools)", name, tool_names.len());
+                        app.msg_ticks = 40;
                     }
                 }
             }
-        }
-
-        KeyCode::Char('d') => {
-            if app.focus == Focus::Sidebar && !app.envs.is_empty() {
-                let env = app.envs[app.sel_env].clone();
-                app.toast = format!("Run: edash doctor {}", env);
+            CatalogAction::RemoveTool(name) => {
+                let lock_path = crate::paths::lockfile_path();
+                if lock_path.exists() {
+                    if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
+                        lf.package.retain(|p| p.name != name);
+                        let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
+                        app.catalog.load_lockfile();
+                    }
+                }
+                let pkg_dir = crate::paths::envs_dir().join(format!("_{}", name));
+                if pkg_dir.exists() {
+                    let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pkg_dir.to_string_lossy()]).status();
+                    let _ = std::fs::remove_dir_all(&pkg_dir);
+                }
+                app.msg = format!("Removed {}", name);
+                app.msg_ticks = 40;
             }
-        }
-
-        KeyCode::Char('v') => {
-            app.toast = "Run: edash verify".into();
-        }
-
-        // Esc from content → sidebar
-        KeyCode::Esc => {
-            if app.focus == Focus::Content {
-                app.focus = Focus::Sidebar;
+            CatalogAction::RemovePdk(name) => {
+                let lock_path = crate::paths::lockfile_path();
+                if lock_path.exists() {
+                    if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
+                        lf.pdk.remove(&name);
+                        let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
+                        app.catalog.load_lockfile();
+                    }
+                }
+                // Also remove PDK directory
+                let pdk_dir = crate::paths::pdks_dir();
+                if pdk_dir.exists() {
+                    let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pdk_dir.to_string_lossy()]).status();
+                    let _ = std::fs::remove_dir_all(&pdk_dir);
+                }
+                app.msg = format!("Removed PDK {}", name);
+                app.msg_ticks = 40;
             }
-        }
-
-        _ => {}
-    }
-}
-
-// ── search editing ───────────────────────────────────────────────────────────
-fn handle_search_edit(app: &mut App, code: KeyCode) {
-    match code {
-        KeyCode::Esc => {
-            if app.search_query.is_empty() {
-                app.mode = Mode::Browse;
-            } else {
-                // Clear query, stay to browse results or go back
-                app.search_query.clear();
-                app.search_results.clear();
-                app.search_cursor = 0;
-                app.mode = Mode::Browse;
+            _ => {
+                app.msg = format!("{:?}", action);
+                app.msg_ticks = 40;
             }
-        }
-        KeyCode::Enter => {
-            if !app.search_results.is_empty() {
-                // Install first result
-                let (name, _) = &app.search_results[app.search_cursor];
-                app.toast = format!("Run: edash install {}", name);
-            }
-            app.mode = Mode::Browse;
-        }
-        KeyCode::Down => {
-            // Move into results browsing
-            app.mode = Mode::SearchBrowsing;
-        }
-        KeyCode::Backspace => {
-            app.search_query.pop();
-            app.search_cursor = 0;
-            refresh_search(app);
-        }
-        KeyCode::Char(c) => {
-            app.search_query.push(c);
-            app.search_cursor = 0;
-            refresh_search(app);
-        }
-        _ => {}
-    }
-}
-
-fn handle_search_browse(app: &mut App, code: KeyCode) {
-    match code {
-        KeyCode::Esc => {
-            app.mode = Mode::SearchEditing;
-        }
-        KeyCode::Enter => {
-            if let Some((name, _)) = app.search_results.get(app.search_cursor) {
-                app.toast = format!("Run: edash install {}", name);
-            }
-            app.mode = Mode::Browse;
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if !app.search_results.is_empty() {
-                app.search_cursor = (app.search_cursor + 1) % app.search_results.len();
-            }
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if !app.search_results.is_empty() {
-                app.search_cursor = app.search_cursor.checked_sub(1).unwrap_or(app.search_results.len() - 1);
-            }
-        }
-        _ => {
-            // Any other key → back to editing
-            handle_search_edit(app, code);
         }
     }
 }
 
-fn refresh_search(app: &mut App) {
-    let results = app.resolver.search(&app.search_query);
-    app.search_results = results.into_iter().map(|e| (e.name, e.kind)).collect();
-}
+fn spawn_pdk_install(app: &mut App, name: &str, _catalog_dir: &PathBuf) {
+    let name = name.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let dl = Arc::clone(&app.downloads);
+    let lock_path = crate::paths::lockfile_path();
 
-// ── render ───────────────────────────────────────────────────────────────────
-fn render(f: &mut Frame, app: &App) {
-    let area = f.area();
-
-    // Footer — contextual
-    let footer = match app.mode {
-        Mode::Help => " any key to dismiss ",
-        Mode::SearchEditing | Mode::SearchBrowsing => {
-            " esc back  ↵ install  j/k results  type to filter "
-        }
-        Mode::Browse => match app.focus {
-            Focus::Sidebar => " ↑↓/jk move  ↵/i open  tab content  / search  ? help  q quit ",
-            Focus::Content => " ↑↓/jk move  ↵/i install  d doctor  v verify  tab sidebar  esc sidebar  / search  ? help  q quit ",
-        },
-        Mode::Quit => "",
-    };
-
-    let main = Block::new()
-        .borders(Borders::ALL)
-        .title_top(" edash ")
-        .title_bottom(footer);
-    let inner = main.inner(area);
-    f.render_widget(main, area);
-
-    match app.mode {
-        Mode::SearchEditing | Mode::SearchBrowsing => render_search(f, inner, app),
-        _ => render_dashboard(f, inner, app),
-    }
-
-    // Help overlay
-    if app.mode == Mode::Help {
-        let r = centered(60, 60, area);
-        f.render_widget(Clear, r);
-        render_help(f, r);
-    }
-
-    // Toast
-    if !app.toast.is_empty() {
-        let r = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)])
-            .split(area)[1];
-        f.render_widget(
-            Paragraph::new(app.toast.as_str()).style(Style::new().fg(GRAY)),
-            r,
-        );
-    }
-}
-
-// ── dashboard ────────────────────────────────────────────────────────────────
-fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)])
-        .split(area);
-
-    // Sidebar — environments
-    let envs: Vec<ListItem> = app
-        .envs
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            let here = i == app.sel_env && app.focus == Focus::Sidebar;
-            let txt = if here {
-                format!("▸ {}", name)
-            } else {
-                format!("  {}", name)
-            };
-            if here {
-                ListItem::new(txt).style(Style::new().fg(CYAN))
-            } else {
-                ListItem::new(txt)
+    // Check if already installed
+    if lock_path.exists() {
+        if let Ok(lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
+            if lf.pdk.contains_key(&name) {
+                return; // Already installed, skip
             }
-        })
-        .collect();
-    f.render_widget(
-        List::new(envs).block(Block::new().borders(Borders::RIGHT).title("Environments")),
-        cols[0],
-    );
+        }
+    }
 
-    // Content — tools
-    if !app.envs.is_empty() {
-        let tools: Vec<ListItem> = app
-            .tools
-            .iter()
-            .enumerate()
-            .map(|(i, (name, ver))| {
-                let here = i == app.sel_tool && app.focus == Focus::Content;
-                let txt = if here {
-                    format!("▸ {:<30} {}", name, ver)
+    dl.lock().unwrap().push(DownloadItem { name: name.clone(), progress: 0, stage: "fetching...".into(), done_ticks: 0 });
+    app.progress_rx = Some(rx);
+
+    thread::spawn(move || {
+        let _ = tx.send(ProgressEvent { tool: name.clone(), stage: "fetching PDK...".into(), done: false, error: None });
+        match crate::pdk::ciel::resolve_and_install(&name, &None) {
+            Ok(pdk) => {
+                let _ = tx.send(ProgressEvent { tool: name.clone(), stage: "done".into(), done: true, error: None });
+                let mut lf = if lock_path.exists() {
+                    crate::lockfile::writer::read_lockfile(&lock_path).unwrap_or_else(|_| crate::lockfile::schema::Lockfile::new())
                 } else {
-                    format!("  {:<30} {}", name, ver)
+                    crate::lockfile::schema::Lockfile::new()
                 };
-                if here {
-                    ListItem::new(txt).style(Style::new().fg(CYAN))
-                } else {
-                    ListItem::new(txt)
-                }
-            })
-            .collect();
-        f.render_widget(
-            List::new(tools).block(
-                Block::new()
-                    .borders(Borders::NONE)
-                    .title(app.selected_env_name()),
-            ),
-            cols[1],
-        );
-    }
-}
-
-// ── search ───────────────────────────────────────────────────────────────────
-fn render_search(f: &mut Frame, area: Rect, app: &App) {
-    let v = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(0)])
-        .split(area);
-
-    // Search input bar
-    let cursor_char = if app.mode == Mode::SearchEditing {
-        "█"
-    } else {
-        ""
-    };
-    let editing = app.mode == Mode::SearchEditing;
-    let input_block = if editing {
-        Block::new()
-            .borders(Borders::ALL)
-            .title(" search ")
-            .style(Style::new().fg(CYAN))
-    } else {
-        Block::new().borders(Borders::ALL).title(" search ")
-    };
-    let input = Paragraph::new(format!("> {}{}", app.search_query, cursor_char)).block(input_block);
-    f.render_widget(input, v[0]);
-
-    // Results
-    let items: Vec<ListItem> = app
-        .search_results
-        .iter()
-        .enumerate()
-        .map(|(i, (name, kind))| {
-            let here = app.mode == Mode::SearchBrowsing && i == app.search_cursor;
-            let txt = if here {
-                format!("▸ {:<30} [{}]", name, kind)
-            } else {
-                format!("  {:<30} [{}]", name, kind)
-            };
-            if here {
-                ListItem::new(txt).style(Style::new().fg(CYAN))
-            } else {
-                ListItem::new(txt)
+                lf.pdk.insert(name.clone(), pdk);
+                let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
             }
-        })
-        .collect();
-    let n = app.search_results.len();
-    f.render_widget(
-        List::new(items).block(Block::new().borders(Borders::ALL).title(format!(
-            " results ({}) ",
-            n
-        ))),
-        v[1],
-    );
+            Err(e) => {
+                let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
+            }
+        }
+    });
 }
 
-// ── help overlay ─────────────────────────────────────────────────────────────
-fn render_help(f: &mut Frame, area: Rect) {
-    let k = Style::new().fg(CYAN);
-    let text = Paragraph::new(vec![
-        Line::from(""),
-        Line::from(vec![Span::raw("  "), Span::styled("Navigation", k), Span::raw("")]),
-        Line::from(vec![Span::raw("    "), Span::styled("↑↓ / j k", k), Span::raw("    move selection")]),
-        Line::from(vec![Span::raw("    "), Span::styled("←→ / h l / tab", k), Span::raw("  switch pane")]),
-        Line::from(vec![Span::raw("    "), Span::styled("esc", k), Span::raw("          back one level")]),
-        Line::from(vec![Span::raw("")]),
-        Line::from(vec![Span::raw("  "), Span::styled("Actions", k), Span::raw("")]),
-        Line::from(vec![Span::raw("    "), Span::styled("↵ / i", k), Span::raw("        install selected")]),
-        Line::from(vec![Span::raw("    "), Span::styled("d", k), Span::raw("            run doctor on env")]),
-        Line::from(vec![Span::raw("    "), Span::styled("v", k), Span::raw("            verify")]),
-        Line::from(vec![Span::raw("")]),
-        Line::from(vec![Span::raw("  "), Span::styled("Search", k), Span::raw("")]),
-        Line::from(vec![Span::raw("    "), Span::styled("/", k), Span::raw("            open search")]),
-        Line::from(vec![Span::raw("    "), Span::styled("type", k), Span::raw("         filter results")]),
-        Line::from(vec![Span::raw("    "), Span::styled("↵", k), Span::raw("            install result")]),
-        Line::from(vec![Span::raw("    "), Span::styled("esc", k), Span::raw("          close search")]),
-        Line::from(vec![Span::raw("")]),
-        Line::from(vec![Span::raw("    "), Span::styled("?", k), Span::raw("            this help")]),
-        Line::from(vec![Span::raw("    "), Span::styled("q", k), Span::raw("            quit")]),
-    ])
-    .block(Block::new().borders(Borders::ALL).title(" help "))
-    .wrap(Wrap { trim: true });
-    f.render_widget(text, area);
+fn spawn_install(app: &mut App, name: &str, catalog_dir: &PathBuf) {
+    let name = name.to_string();
+    let cd = catalog_dir.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let dl = Arc::clone(&app.downloads);
+    let lock_path = crate::paths::lockfile_path();
+
+    dl.lock().unwrap().push(DownloadItem { name: name.clone(), progress: 0, stage: "queued".into(), done_ticks: 0 });
+
+    app.progress_rx = Some(rx);
+
+    thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let resolver = match Resolver::load(&cd) {
+                Ok(r) => r,
+                Err(e) => { let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) }); return; }
+            };
+            let items = match resolver.resolve(&name) {
+                Ok(i) => i,
+                Err(e) => { let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) }); return; }
+            };
+
+            // Load existing lockfile
+            let mut lockfile = if lock_path.exists() {
+                crate::lockfile::writer::read_lockfile(&lock_path).unwrap_or_else(|_| crate::lockfile::schema::Lockfile::new())
+            } else {
+                crate::lockfile::schema::Lockfile::new()
+            };
+
+            for item in &items {
+                let req = match item {
+                    crate::catalog::index::ResolvedItem::Tool(r) => r,
+                    _ => continue,
+                };
+
+                // Skip if already installed
+                if lockfile.package.iter().any(|p| p.name == req.name) {
+                    let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "already installed".into(), done: true, error: None });
+                    continue;
+                }
+
+                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "installing...".into(), done: false, error: None });
+
+                let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
+
+                match req.backend {
+                    crate::catalog::index::BackendKind::OssCadSuite => {
+                        let backend = crate::backend::oss_cad_suite::OssCadSuiteBackend::new();
+                        match backend.install_package(req, ptx) {
+                            Ok(pkg) => {
+                                lockfile.package.retain(|p| p.name != pkg.name);
+                                lockfile.package.push(pkg);
+                                let _ = crate::lockfile::writer::write_lockfile(&lockfile, &lock_path);
+                                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "done".into(), done: true, error: None });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
+                            }
+                        }
+                    }
+                    _ => {
+                        let backend = crate::backend::micromamba::MicromambaBackend::new();
+                        match backend.install_package(req, ptx) {
+                            Ok(pkg) => {
+                                lockfile.package.retain(|p| p.name != pkg.name);
+                                lockfile.package.push(pkg);
+                                let _ = crate::lockfile::writer::write_lockfile(&lockfile, &lock_path);
+                                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "done".into(), done: true, error: None });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    });
 }
 
-fn centered(px: u16, py: u16, r: Rect) -> Rect {
-    let v = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - py) / 2),
-            Constraint::Percentage(py),
-            Constraint::Percentage((100 - py) / 2),
-        ])
-        .split(r);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - px) / 2),
-            Constraint::Percentage(px),
-            Constraint::Percentage((100 - px) / 2),
-        ])
-        .split(v[1])[1]
+fn render(f: &mut Frame, app: &mut App) {
+    let area = f.area();
+    let footer = if app.msg_ticks > 0 {
+        app.msg_ticks -= 1;
+        app.msg.clone()
+    } else {
+        app.catalog.footer()
+    };
+    let block = Block::new().borders(Borders::ALL).title_top(" edash ").title_bottom(footer);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    app.catalog.draw(f, inner);
+
+    if let Some(Overlay::Help) = app.overlay {
+        overlays::help::draw(f, area);
+    }
 }
