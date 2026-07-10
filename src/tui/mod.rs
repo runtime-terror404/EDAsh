@@ -28,7 +28,8 @@ struct App {
     quit: bool,
     msg: String,
     msg_ticks: u8,
-    progress_rx: Option<std::sync::mpsc::Receiver<ProgressEvent>>,
+    progress_tx: std::sync::mpsc::Sender<ProgressEvent>,
+    progress_rx: std::sync::mpsc::Receiver<ProgressEvent>,
     downloads: Arc<Mutex<Vec<DownloadItem>>>,
 }
 
@@ -55,12 +56,42 @@ fn resolve_tool_names(resolver: &Resolver, env_name: &str) -> Vec<String> {
     names
 }
 
-/// A short, human confirmation line for a pending destructive action.
-fn confirm_message(action: &CatalogAction) -> Option<String> {
+/// Which other envs (besides the given one) use this tool?
+fn other_envs_using(resolver: &Resolver, tool: &str, current_env: &str) -> Vec<String> {
+    resolver
+        .which_envs(tool)
+        .into_iter()
+        .filter(|e| e != current_env)
+        .collect()
+}
+
+/// Build a confirmation message for destructive actions.
+fn confirm_message(resolver: &Resolver, action: &CatalogAction) -> Option<String> {
     match action {
-        CatalogAction::RemoveEnv(name) => Some(format!("  Remove all tools in \"{}\"?", name)),
-        CatalogAction::RemoveTool(name) => Some(format!("  Remove \"{}\"?", name)),
-        CatalogAction::RemovePdk(name) => Some(format!("  Remove PDK \"{}\"?", name)),
+        CatalogAction::RemoveEnv(name) => {
+            let tool_names = resolve_tool_names(resolver, name);
+            let total = tool_names.len();
+            let shared: Vec<&String> = tool_names.iter().filter(|t| !other_envs_using(resolver, t, name).is_empty()).collect();
+            let remove = total - shared.len();
+            Some(format!(
+                "Remove profile \"{}\"?\n\n{} packages will be removed.\n{} shared packages will be kept.",
+                name, remove, shared.len()
+            ))
+        }
+        CatalogAction::RemoveTool(name) => {
+            let others = other_envs_using(resolver, name, "");
+            if others.is_empty() {
+                Some(format!("Remove \"{}\"?", name))
+            } else {
+                let mut msg = format!("Remove \"{}\"?\n\nRequired by:\n", name);
+                for env in &others {
+                    msg.push_str(&format!("  \u{2022} {}\n", env));
+                }
+                msg.push_str("\nRemoving it will make these profiles incomplete.");
+                Some(msg)
+            }
+        }
+        CatalogAction::RemovePdk(name) => Some(format!("Remove PDK \"{}\"?", name)),
         _ => None,
     }
 }
@@ -69,15 +100,15 @@ impl App {
     fn new(catalog_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         let resolver = Resolver::load(&catalog_dir)?;
         let mut envs = resolver.list_environments();
-        envs.sort(); // stable order across runs
+        envs.sort();
         let mut catalog = CatalogScreen::new(envs.clone());
         catalog.rebuild_sidebar();
-        // Resolve tools for all envs so dots show correctly on startup
         for env in &envs {
             let names = resolve_tool_names(&resolver, env);
             catalog.refresh_tools_for(env, names);
         }
         catalog.load_lockfile();
+        let (tx, rx) = std::sync::mpsc::channel();
         Ok(Self {
             resolver,
             catalog,
@@ -85,7 +116,8 @@ impl App {
             quit: false,
             msg: String::new(),
             msg_ticks: 0,
-            progress_rx: None,
+            progress_tx: tx,
+            progress_rx: rx,
             downloads: Arc::new(Mutex::new(Vec::new())),
         })
     }
@@ -104,21 +136,19 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         tick += 1;
         app.catalog.tick = tick;
 
-        // Drain progress events from background threads
-        if let Some(ref rx) = app.progress_rx {
-            while let Ok(ev) = rx.try_recv() {
-                if let Ok(mut dls) = app.downloads.lock() {
-                    if let Some(dl) = dls.iter_mut().find(|d| d.name == ev.tool) {
-                        dl.stage = ev.stage.clone();
-                        dl.progress = if ev.done { 100 } else { dl.progress.saturating_add(3).min(95) };
-                        dl.done_ticks = if ev.done { 10 } else { 0 };
-                    } else if !ev.done {
-                        dls.push(DownloadItem { name: ev.tool.clone(), progress: 5, stage: ev.stage, done_ticks: 0 });
-                    }
+        // Drain progress events from all background threads
+        while let Ok(ev) = app.progress_rx.try_recv() {
+            if let Ok(mut dls) = app.downloads.lock() {
+                if let Some(dl) = dls.iter_mut().find(|d| d.name == ev.tool) {
+                    dl.stage = ev.stage.clone();
+                    dl.progress = if ev.done { 100 } else { dl.progress.saturating_add(3).min(95) };
+                    dl.done_ticks = if ev.done { 10 } else { 0 };
+                } else if !ev.done {
+                    dls.push(DownloadItem { name: ev.tool.clone(), progress: 5, stage: ev.stage, done_ticks: 0 });
                 }
-                if ev.done && ev.error.is_none() {
-                    app.catalog.load_lockfile();
-                }
+            }
+            if ev.done && ev.error.is_none() {
+                app.catalog.load_lockfile();
             }
         }
 
@@ -200,7 +230,17 @@ fn handle(app: &mut App, code: KeyCode, catalog_dir: &PathBuf) {
     }
 
     if let Some(action) = action {
-        if let Some(msg) = confirm_message(&action) {
+        // Skip confirm for tools that aren't installed
+        if let CatalogAction::RemoveTool(ref name) = action {
+            let installed = app.catalog.tools.iter().any(|p| p.name == *name)
+                || crate::paths::envs_dir().join(format!("_{}", name)).exists();
+            if !installed {
+                app.msg = format!("'{}' is not installed", name);
+                app.msg_ticks = 40;
+                return;
+            }
+        }
+        if let Some(msg) = confirm_message(&app.resolver, &action) {
             app.overlay = Some(Overlay::Confirm(action, msg));
         } else {
             apply_action(app, action, catalog_dir);
@@ -222,7 +262,6 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
             }
             app.catalog.downloads = app.downloads.lock().unwrap().clone();
             app.catalog.rebuild_sidebar();
-            app.catalog.jump_to_downloads();
             spawn_install(app, &name, catalog_dir);
         }
         CatalogAction::InstallTool(name) => {
@@ -233,13 +272,11 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
                 .unwrap()
                 .push(DownloadItem { name: name.clone(), progress: 0, stage: "queued".into(), done_ticks: 0 });
             app.catalog.downloads = app.downloads.lock().unwrap().clone();
-            app.catalog.jump_to_downloads();
             spawn_install(app, &name, catalog_dir);
         }
         CatalogAction::InstallPdk(name) => {
             app.msg = format!("Installing PDK {}...", name);
             app.msg_ticks = 80;
-            app.catalog.jump_to_downloads();
             spawn_pdk_install(app, &name, catalog_dir);
         }
         CatalogAction::RemoveEnv(name) => {
@@ -247,24 +284,29 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
             if lock_path.exists() {
                 if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
                     let tool_names = resolve_tool_names(&app.resolver, &name);
+                    let mut removed = 0;
+                    let mut skipped = 0;
                     for t in &tool_names {
+                        let others = other_envs_using(&app.resolver, t, &name);
+                        if !others.is_empty() {
+                            skipped += 1;
+                            continue; // shared tool, don't delete
+                        }
                         let pkg_dir = crate::paths::envs_dir().join(format!("_{}", t));
                         if pkg_dir.exists() {
                             let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pkg_dir.to_string_lossy()]).status();
                             let _ = std::fs::remove_dir_all(&pkg_dir);
                         }
-                        if t == "oss-cad-suite" || tool_names.iter().any(|n| n == "yosys") {
-                            let oss_dir = crate::paths::envs_dir().join("oss-cad-suite");
-                            if oss_dir.exists() {
-                                let _ = std::process::Command::new("chmod").args(["-R", "u+w", &oss_dir.to_string_lossy()]).status();
-                                let _ = std::fs::remove_dir_all(&oss_dir);
-                            }
-                        }
+                        lf.package.retain(|p| p.name != *t);
+                        removed += 1;
                     }
-                    lf.package.retain(|p| !tool_names.contains(&p.name));
                     let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
                     app.catalog.load_lockfile();
-                    app.msg = format!("Removed {} ({} tools)", name, tool_names.len());
+                    if skipped > 0 {
+                        app.msg = format!("Removed {} tools from {} ({} shared tools kept)", removed, name, skipped);
+                    } else {
+                        app.msg = format!("Removed {} ({} tools)", name, removed);
+                    }
                     app.msg_ticks = 40;
                 }
             }
@@ -312,7 +354,7 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
 
 fn spawn_pdk_install(app: &mut App, name: &str, _catalog_dir: &PathBuf) {
     let name = name.to_string();
-    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = app.progress_tx.clone();
     let dl = Arc::clone(&app.downloads);
     let lock_path = crate::paths::lockfile_path();
 
@@ -325,7 +367,6 @@ fn spawn_pdk_install(app: &mut App, name: &str, _catalog_dir: &PathBuf) {
     }
 
     dl.lock().unwrap().push(DownloadItem { name: name.clone(), progress: 0, stage: "fetching...".into(), done_ticks: 0 });
-    app.progress_rx = Some(rx);
 
     thread::spawn(move || {
         let _ = tx.send(ProgressEvent { tool: name.clone(), stage: "fetching PDK...".into(), done: false, error: None });
@@ -350,11 +391,9 @@ fn spawn_pdk_install(app: &mut App, name: &str, _catalog_dir: &PathBuf) {
 fn spawn_install(app: &mut App, name: &str, catalog_dir: &PathBuf) {
     let name = name.to_string();
     let cd = catalog_dir.clone();
-    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = app.progress_tx.clone();
     let dl = Arc::clone(&app.downloads);
     let lock_path = crate::paths::lockfile_path();
-
-    app.progress_rx = Some(rx);
 
     thread::spawn(move || {
         let resolver = match Resolver::load(&cd) {
@@ -407,6 +446,12 @@ fn spawn_install(app: &mut App, name: &str, catalog_dir: &PathBuf) {
 
             match result {
                 Ok(pkg) => {
+                    // Re-read lockfile to pick up changes from other threads
+                    if lock_path.exists() {
+                        if let Ok(fresh) = crate::lockfile::writer::read_lockfile(&lock_path) {
+                            lockfile = fresh;
+                        }
+                    }
                     lockfile.package.retain(|p| p.name != pkg.name);
                     lockfile.package.push(pkg);
                     let _ = crate::lockfile::writer::write_lockfile(&lockfile, &lock_path);
