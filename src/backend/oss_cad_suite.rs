@@ -76,27 +76,28 @@ impl OssCadSuiteBackend {
         if !cache_path.exists() {
             let _ = progress.send(Progress::Stage("downloading oss-cad-suite (~1.5GB)".into()));
 
-            let status = Command::new("curl")
+            let output = Command::new("curl")
                 .args([
                     "-L",
-                    "--progress-bar",
+                    "-sS",
                     "-o",
                     &cache_path.to_string_lossy(),
                     &url,
                 ])
-                .status()
+                .output()
                 .map_err(|e| format!("curl failed: {e}"))?;
 
-            if !status.success() {
+            if !output.status.success() {
                 let _ = std::fs::remove_file(&cache_path);
-                return Err("oss-cad-suite download failed".into());
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("oss-cad-suite download failed: {}", stderr).into());
             }
         }
 
         let _ = progress.send(Progress::Stage("extracting oss-cad-suite".into()));
         std::fs::create_dir_all(&self.install_dir)?;
 
-        let status = Command::new("tar")
+        let output = Command::new("tar")
             .args([
                 "-xzf",
                 &cache_path.to_string_lossy(),
@@ -104,11 +105,12 @@ impl OssCadSuiteBackend {
                 &self.install_dir.to_string_lossy(),
                 "--strip-components=1",
             ])
-            .status()
+            .output()
             .map_err(|e| format!("tar failed: {e}"))?;
 
-        if !status.success() {
-            return Err("oss-cad-suite extraction failed".into());
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("oss-cad-suite extraction failed: {}", stderr).into());
         }
 
         Ok(())

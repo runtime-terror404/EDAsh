@@ -1,5 +1,6 @@
 mod screens;
 mod overlays;
+pub mod widgets;
 
 use crate::catalog::resolver::Resolver;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
@@ -15,7 +16,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-enum Overlay { Help }
+enum Overlay {
+    Help,
+    Confirm(CatalogAction, String),
+}
 
 struct App {
     resolver: Resolver,
@@ -51,14 +55,28 @@ fn resolve_tool_names(resolver: &Resolver, env_name: &str) -> Vec<String> {
     names
 }
 
+/// A short, human confirmation line for a pending destructive action.
+fn confirm_message(action: &CatalogAction) -> Option<String> {
+    match action {
+        CatalogAction::RemoveEnv(name) => Some(format!("  Remove all tools in \"{}\"?", name)),
+        CatalogAction::RemoveTool(name) => Some(format!("  Remove \"{}\"?", name)),
+        CatalogAction::RemovePdk(name) => Some(format!("  Remove PDK \"{}\"?", name)),
+        _ => None,
+    }
+}
+
 impl App {
     fn new(catalog_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         let resolver = Resolver::load(&catalog_dir)?;
-        let envs = resolver.list_environments();
-        let mut catalog = CatalogScreen::new(envs);
+        let mut envs = resolver.list_environments();
+        envs.sort(); // stable order across runs
+        let mut catalog = CatalogScreen::new(envs.clone());
         catalog.rebuild_sidebar();
-        let names = resolve_tool_names(&resolver, &resolver.list_environments()[0]);
-        catalog.refresh_tools(names);
+        // Resolve tools for all envs so dots show correctly on startup
+        for env in &envs {
+            let names = resolve_tool_names(&resolver, env);
+            catalog.refresh_tools_for(env, names);
+        }
         catalog.load_lockfile();
         Ok(Self {
             resolver,
@@ -84,23 +102,21 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let mut tick: u64 = 0;
     loop {
         tick += 1;
+        app.catalog.tick = tick;
 
         // Drain progress events from background threads
         if let Some(ref rx) = app.progress_rx {
-            let mut has_active = false;
             while let Ok(ev) = rx.try_recv() {
                 if let Ok(mut dls) = app.downloads.lock() {
                     if let Some(dl) = dls.iter_mut().find(|d| d.name == ev.tool) {
                         dl.stage = ev.stage.clone();
                         dl.progress = if ev.done { 100 } else { dl.progress.saturating_add(3).min(95) };
-                        dl.done_ticks = if ev.done { 60 } else { 0 };
+                        dl.done_ticks = if ev.done { 10 } else { 0 };
                     } else if !ev.done {
                         dls.push(DownloadItem { name: ev.tool.clone(), progress: 5, stage: ev.stage, done_ticks: 0 });
                     }
                 }
-                if !ev.done { has_active = true; }
                 if ev.done && ev.error.is_none() {
-                    // Reload lockfile after successful install
                     app.catalog.load_lockfile();
                 }
             }
@@ -110,25 +126,31 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(mut dls) = app.downloads.lock() {
             dls.retain(|dl| dl.done_ticks > 0 || dl.progress < 100);
             for dl in dls.iter_mut() {
-                if dl.done_ticks > 0 { dl.done_ticks -= 1; }
+                if dl.done_ticks > 0 {
+                    dl.done_ticks -= 1;
+                }
             }
         }
 
-        // Sync to catalog
         if let Ok(dls) = app.downloads.lock() {
             app.catalog.downloads = dls.clone();
         }
         app.catalog.rebuild_sidebar();
-        // Reload lockfile periodically to pick up changes
         if tick % 5 == 0 {
             app.catalog.load_lockfile();
         }
 
         terminal.draw(|f| render(f, &mut app))?;
-        if app.quit { break; }
-        if !crossterm::event::poll(std::time::Duration::from_millis(100))? { continue; }
+        if app.quit {
+            break;
+        }
+        if !crossterm::event::poll(std::time::Duration::from_millis(100))? {
+            continue;
+        }
         if let Event::Key(key) = crossterm::event::read()? {
-            if key.kind == KeyEventKind::Release { continue; }
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
             handle(&mut app, key.code, &catalog_dir);
         }
     }
@@ -139,9 +161,34 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn handle(app: &mut App, code: KeyCode, catalog_dir: &PathBuf) {
-    if code == KeyCode::Char('q') && app.overlay.is_none() { app.quit = true; return; }
-    if let Some(Overlay::Help) = app.overlay { app.overlay = None; return; }
-    if code == KeyCode::Char('?') { app.overlay = Some(Overlay::Help); return; }
+    // Confirm overlay intercepts everything until resolved.
+    if matches!(app.overlay, Some(Overlay::Confirm(_, _))) {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Some(Overlay::Confirm(action, _)) = app.overlay.take() {
+                    apply_action(app, action, catalog_dir);
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.overlay = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    if code == KeyCode::Char('q') && app.overlay.is_none() {
+        app.quit = true;
+        return;
+    }
+    if matches!(app.overlay, Some(Overlay::Help)) {
+        app.overlay = None;
+        return;
+    }
+    if code == KeyCode::Char('?') {
+        app.overlay = Some(Overlay::Help);
+        return;
+    }
 
     let prev_idx = app.catalog.sidebar_idx;
     let action = app.catalog.handle(code);
@@ -153,102 +200,112 @@ fn handle(app: &mut App, code: KeyCode, catalog_dir: &PathBuf) {
     }
 
     if let Some(action) = action {
-        match action {
-            CatalogAction::InstallEnv(name) => {
-                app.msg = format!("Installing {}...", name);
-                app.msg_ticks = 80;
-                // Add all child tools to downloads instead of env name
-                let tool_names = resolve_tool_names(&app.resolver, &name);
-                for t in &tool_names {
-                    app.downloads.lock().unwrap().push(DownloadItem {
-                        name: t.clone(), progress: 0, stage: "queued".into(), done_ticks: 0
-                    });
-                }
-                app.catalog.downloads = app.downloads.lock().unwrap().clone();
-                app.catalog.rebuild_sidebar();
-                spawn_install(app, &name, catalog_dir);
+        if let Some(msg) = confirm_message(&action) {
+            app.overlay = Some(Overlay::Confirm(action, msg));
+        } else {
+            apply_action(app, action, catalog_dir);
+        }
+    }
+}
+
+fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
+    match action {
+        CatalogAction::InstallEnv(name) => {
+            app.msg = format!("Installing {}...", name);
+            app.msg_ticks = 80;
+            let tool_names = resolve_tool_names(&app.resolver, &name);
+            for t in &tool_names {
+                app.downloads
+                    .lock()
+                    .unwrap()
+                    .push(DownloadItem { name: t.clone(), progress: 0, stage: "queued".into(), done_ticks: 0 });
             }
-            CatalogAction::InstallTool(name) => {
-                app.msg = format!("Installing {}...", name);
-                app.msg_ticks = 80;
-                spawn_install(app, &name, catalog_dir);
-            }
-            CatalogAction::InstallPdk(name) => {
-                app.msg = format!("Installing PDK {}...", name);
-                app.msg_ticks = 80;
-                spawn_pdk_install(app, &name, catalog_dir);
-            }
-            CatalogAction::RemoveEnv(name) => {
-                let lock_path = crate::paths::lockfile_path();
-                if lock_path.exists() {
-                    if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
-                        let tool_names = resolve_tool_names(&app.resolver, &name);
-                        let mut has_oss = false;
-                        for t in &tool_names {
-                            let pkg_dir = crate::paths::envs_dir().join(format!("_{}", t));
-                            if pkg_dir.exists() {
-                                let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pkg_dir.to_string_lossy()]).status();
-                                let _ = std::fs::remove_dir_all(&pkg_dir);
-                            }
-                            // Check if this tool is oss-cad-suite
-                            if lf.package.iter().any(|p| p.name == *t && p.backend == "oss-cad-suite") {
-                                has_oss = true;
-                            }
+            app.catalog.downloads = app.downloads.lock().unwrap().clone();
+            app.catalog.rebuild_sidebar();
+            app.catalog.jump_to_downloads();
+            spawn_install(app, &name, catalog_dir);
+        }
+        CatalogAction::InstallTool(name) => {
+            app.msg = format!("Installing {}...", name);
+            app.msg_ticks = 80;
+            app.downloads
+                .lock()
+                .unwrap()
+                .push(DownloadItem { name: name.clone(), progress: 0, stage: "queued".into(), done_ticks: 0 });
+            app.catalog.downloads = app.downloads.lock().unwrap().clone();
+            app.catalog.jump_to_downloads();
+            spawn_install(app, &name, catalog_dir);
+        }
+        CatalogAction::InstallPdk(name) => {
+            app.msg = format!("Installing PDK {}...", name);
+            app.msg_ticks = 80;
+            app.catalog.jump_to_downloads();
+            spawn_pdk_install(app, &name, catalog_dir);
+        }
+        CatalogAction::RemoveEnv(name) => {
+            let lock_path = crate::paths::lockfile_path();
+            if lock_path.exists() {
+                if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
+                    let tool_names = resolve_tool_names(&app.resolver, &name);
+                    for t in &tool_names {
+                        let pkg_dir = crate::paths::envs_dir().join(format!("_{}", t));
+                        if pkg_dir.exists() {
+                            let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pkg_dir.to_string_lossy()]).status();
+                            let _ = std::fs::remove_dir_all(&pkg_dir);
                         }
-                        if has_oss {
+                        if t == "oss-cad-suite" || tool_names.iter().any(|n| n == "yosys") {
                             let oss_dir = crate::paths::envs_dir().join("oss-cad-suite");
                             if oss_dir.exists() {
                                 let _ = std::process::Command::new("chmod").args(["-R", "u+w", &oss_dir.to_string_lossy()]).status();
                                 let _ = std::fs::remove_dir_all(&oss_dir);
                             }
                         }
-                        lf.package.retain(|p| !tool_names.contains(&p.name));
-                        let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
-                        app.catalog.load_lockfile();
-                        app.msg = format!("Removed {} ({} tools)", name, tool_names.len());
-                        app.msg_ticks = 40;
                     }
+                    lf.package.retain(|p| !tool_names.contains(&p.name));
+                    let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
+                    app.catalog.load_lockfile();
+                    app.msg = format!("Removed {} ({} tools)", name, tool_names.len());
+                    app.msg_ticks = 40;
                 }
             }
-            CatalogAction::RemoveTool(name) => {
-                let lock_path = crate::paths::lockfile_path();
-                if lock_path.exists() {
-                    if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
-                        lf.package.retain(|p| p.name != name);
-                        let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
-                        app.catalog.load_lockfile();
-                    }
+        }
+        CatalogAction::RemoveTool(name) => {
+            let lock_path = crate::paths::lockfile_path();
+            if lock_path.exists() {
+                if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
+                    lf.package.retain(|p| p.name != name);
+                    let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
+                    app.catalog.load_lockfile();
                 }
-                let pkg_dir = crate::paths::envs_dir().join(format!("_{}", name));
-                if pkg_dir.exists() {
-                    let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pkg_dir.to_string_lossy()]).status();
-                    let _ = std::fs::remove_dir_all(&pkg_dir);
-                }
-                app.msg = format!("Removed {}", name);
-                app.msg_ticks = 40;
             }
-            CatalogAction::RemovePdk(name) => {
-                let lock_path = crate::paths::lockfile_path();
-                if lock_path.exists() {
-                    if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
-                        lf.pdk.remove(&name);
-                        let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
-                        app.catalog.load_lockfile();
-                    }
-                }
-                // Also remove PDK directory
-                let pdk_dir = crate::paths::pdks_dir();
-                if pdk_dir.exists() {
-                    let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pdk_dir.to_string_lossy()]).status();
-                    let _ = std::fs::remove_dir_all(&pdk_dir);
-                }
-                app.msg = format!("Removed PDK {}", name);
-                app.msg_ticks = 40;
+            let pkg_dir = crate::paths::envs_dir().join(format!("_{}", name));
+            if pkg_dir.exists() {
+                let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pkg_dir.to_string_lossy()]).status();
+                let _ = std::fs::remove_dir_all(&pkg_dir);
             }
-            _ => {
-                app.msg = format!("{:?}", action);
-                app.msg_ticks = 40;
+            app.msg = format!("Removed {}", name);
+            app.msg_ticks = 40;
+        }
+        CatalogAction::RemovePdk(name) => {
+            let lock_path = crate::paths::lockfile_path();
+            if lock_path.exists() {
+                if let Ok(mut lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
+                    lf.pdk.remove(&name);
+                    let _ = crate::lockfile::writer::write_lockfile(&lf, &lock_path);
+                    app.catalog.load_lockfile();
+                }
             }
+            let pdk_dir = crate::paths::pdks_dir();
+            if pdk_dir.exists() {
+                let _ = std::process::Command::new("chmod").args(["-R", "u+w", &pdk_dir.to_string_lossy()]).status();
+                let _ = std::fs::remove_dir_all(&pdk_dir);
+            }
+            app.msg = format!("Removed PDK {}", name);
+            app.msg_ticks = 40;
+        }
+        other => {
+            app.msg = format!("{:?}", other);
+            app.msg_ticks = 40;
         }
     }
 }
@@ -259,11 +316,10 @@ fn spawn_pdk_install(app: &mut App, name: &str, _catalog_dir: &PathBuf) {
     let dl = Arc::clone(&app.downloads);
     let lock_path = crate::paths::lockfile_path();
 
-    // Check if already installed
     if lock_path.exists() {
         if let Ok(lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
             if lf.pdk.contains_key(&name) {
-                return; // Already installed, skip
+                return;
             }
         }
     }
@@ -298,77 +354,69 @@ fn spawn_install(app: &mut App, name: &str, catalog_dir: &PathBuf) {
     let dl = Arc::clone(&app.downloads);
     let lock_path = crate::paths::lockfile_path();
 
-    dl.lock().unwrap().push(DownloadItem { name: name.clone(), progress: 0, stage: "queued".into(), done_ticks: 0 });
-
     app.progress_rx = Some(rx);
 
     thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let resolver = match Resolver::load(&cd) {
-                Ok(r) => r,
-                Err(e) => { let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) }); return; }
-            };
-            let items = match resolver.resolve(&name) {
-                Ok(i) => i,
-                Err(e) => { let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) }); return; }
+        let resolver = match Resolver::load(&cd) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
+                return;
+            }
+        };
+        let items = match resolver.resolve(&name) {
+            Ok(i) => i,
+            Err(e) => {
+                let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
+                return;
+            }
+        };
+
+        let mut lockfile = if lock_path.exists() {
+            crate::lockfile::writer::read_lockfile(&lock_path).unwrap_or_else(|_| crate::lockfile::schema::Lockfile::new())
+        } else {
+            crate::lockfile::schema::Lockfile::new()
+        };
+
+        for item in &items {
+            let req = match item {
+                crate::catalog::index::ResolvedItem::Tool(r) => r,
+                _ => continue,
             };
 
-            // Load existing lockfile
-            let mut lockfile = if lock_path.exists() {
-                crate::lockfile::writer::read_lockfile(&lock_path).unwrap_or_else(|_| crate::lockfile::schema::Lockfile::new())
-            } else {
-                crate::lockfile::schema::Lockfile::new()
-            };
+            if lockfile.package.iter().any(|p| p.name == req.name) {
+                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "already installed".into(), done: true, error: None });
+                continue;
+            }
 
-            for item in &items {
-                let req = match item {
-                    crate::catalog::index::ResolvedItem::Tool(r) => r,
-                    _ => continue,
-                };
-
-                // Skip if already installed
-                if lockfile.package.iter().any(|p| p.name == req.name) {
-                    let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "already installed".into(), done: true, error: None });
-                    continue;
+            let _ = dl.lock().map(|mut d| {
+                if !d.iter().any(|x| x.name == req.name) {
+                    d.push(DownloadItem { name: req.name.clone(), progress: 0, stage: "queued".into(), done_ticks: 0 });
                 }
+            });
+            let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "installing...".into(), done: false, error: None });
 
-                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "installing...".into(), done: false, error: None });
+            let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
 
-                let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
+            let result = match req.backend {
+                crate::catalog::index::BackendKind::OssCadSuite => {
+                    crate::backend::oss_cad_suite::OssCadSuiteBackend::new().install_package(req, ptx)
+                }
+                _ => crate::backend::micromamba::MicromambaBackend::new().install_package(req, ptx),
+            };
 
-                match req.backend {
-                    crate::catalog::index::BackendKind::OssCadSuite => {
-                        let backend = crate::backend::oss_cad_suite::OssCadSuiteBackend::new();
-                        match backend.install_package(req, ptx) {
-                            Ok(pkg) => {
-                                lockfile.package.retain(|p| p.name != pkg.name);
-                                lockfile.package.push(pkg);
-                                let _ = crate::lockfile::writer::write_lockfile(&lockfile, &lock_path);
-                                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "done".into(), done: true, error: None });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
-                            }
-                        }
-                    }
-                    _ => {
-                        let backend = crate::backend::micromamba::MicromambaBackend::new();
-                        match backend.install_package(req, ptx) {
-                            Ok(pkg) => {
-                                lockfile.package.retain(|p| p.name != pkg.name);
-                                lockfile.package.push(pkg);
-                                let _ = crate::lockfile::writer::write_lockfile(&lockfile, &lock_path);
-                                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "done".into(), done: true, error: None });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
-                            }
-                        }
-                    }
+            match result {
+                Ok(pkg) => {
+                    lockfile.package.retain(|p| p.name != pkg.name);
+                    lockfile.package.push(pkg);
+                    let _ = crate::lockfile::writer::write_lockfile(&lockfile, &lock_path);
+                    let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "done".into(), done: true, error: None });
+                }
+                Err(e) => {
+                    let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
                 }
             }
-        });
+        }
     });
 }
 
@@ -385,7 +433,9 @@ fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(block, area);
     app.catalog.draw(f, inner);
 
-    if let Some(Overlay::Help) = app.overlay {
-        overlays::help::draw(f, area);
+    match &app.overlay {
+        Some(Overlay::Help) => overlays::help::draw(f, area),
+        Some(Overlay::Confirm(_, msg)) => overlays::confirm::draw(f, area, msg),
+        None => {}
     }
 }
