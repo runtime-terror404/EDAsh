@@ -72,7 +72,7 @@ pub fn resolve_and_install(
 
 fn pdk_family(name: &str) -> &str {
     match name {
-        "sky130" | "sky130a" | "sky130b" => "sky130",
+        "sky130" => "sky130",
         "gf180" => "gf180mcu",
         "ihp-sg13g2" => "ihp-sg13g2",
         _ => name,
