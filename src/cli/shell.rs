@@ -1,5 +1,6 @@
 use crate::catalog::index::ResolvedItem;
 use crate::catalog::resolver::Resolver;
+use crate::lockfile::schema::Lockfile;
 use crate::paths;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -16,6 +17,15 @@ pub fn shell(
 
     let mut paths: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let mut installed_tools: Vec<String> = Vec::new();
+
+    // Read lockfile to know what's installed
+    let lock_path = paths::lockfile_path();
+    let lockfile = if lock_path.exists() {
+        crate::lockfile::writer::read_lockfile(&lock_path).unwrap_or(Lockfile::new())
+    } else {
+        Lockfile::new()
+    };
 
     for item in &items {
         let req = match item {
@@ -34,16 +44,47 @@ pub fn shell(
         if seen.insert(dir_str.clone()) && bin_dir.exists() {
             paths.push(dir_str);
         }
+        // Check if installed
+        if lockfile.package.iter().any(|p| p.name == req.name) {
+            installed_tools.push(req.name.clone());
+        }
     }
+
+    // Print MOTD
+    print_motd(name, &installed_tools);
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let current_path = std::env::var("PATH").unwrap_or_default();
     let new_path = format!("{}:{}", paths.join(":"), current_path);
 
-    let status = Command::new(&shell)
-        .env("PATH", &new_path)
-        .env("EDASH_PROFILE", name)
-        .status()?;
+    let mut cmd = Command::new(&shell);
+    cmd.env("PATH", &new_path)
+       .env("EDASH_PROFILE", name);
+
+    let pdks_dir = paths::pdks_dir();
+    if pdks_dir.exists() {
+        cmd.env("PDK_ROOT", pdks_dir.to_string_lossy().as_ref());
+    }
+
+    let status = cmd.status()?;
 
     std::process::exit(status.code().unwrap_or(1));
+}
+
+fn print_motd(env_name: &str, tools: &[String]) {
+    let name = match env_name {
+        "digital" => "Digital",
+        "analog" => "Analog",
+        _ => env_name,
+    };
+    println!(
+        "────┐        ┌──────┐   ┌─┐     ┌────────┐      ┌───────┐\n    └────────┘      └───┘ └─────┘        └──────┘       └───────────────────────────────────────────────────────────────────────────\n ░█▀▀░█▀▄░█▀█░█▀▀░█░█\n ░█▀▀░█░█░█▀█░▀▀█░█▀█\n ░▀▀▀░▀▀░░▀░▀░▀▀▀░▀░▀\n"
+    );
+    println!("Welcome to the {} environment.......\n", name);
+    if !tools.is_empty() {
+        println!("Available tools: {}", tools.join(" • "));
+    }
+    println!("\nType 'exit' to restore your original shell.");
+    println!("\nPowered by open-source EDA.\nBuild without barriers.");
+    println!("────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────");
 }

@@ -129,7 +129,7 @@ impl App {
     }
 }
 
-pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(catalog_dir: PathBuf) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let mut app = App::new(catalog_dir.clone())?;
     enable_raw_mode()?;
     let mut out = stdout();
@@ -209,7 +209,14 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 
         terminal.draw(|f| render(f, &mut app))?;
         if app.quit {
-            break;
+            let shell = if app.msg.starts_with("SHELL:") {
+                Some(app.msg.trim_start_matches("SHELL:").to_string())
+            } else {
+                None
+            };
+            disable_raw_mode()?;
+            terminal.backend_mut().execute(LeaveAlternateScreen)?;
+            return Ok(shell);
         }
         if !crossterm::event::poll(std::time::Duration::from_millis(100))? {
             continue;
@@ -227,10 +234,6 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
             handle(&mut app, key.code, &catalog_dir);
         }
     }
-
-    disable_raw_mode()?;
-    terminal.backend_mut().execute(LeaveAlternateScreen)?;
-    Ok(())
 }
 
 fn handle(app: &mut App, code: KeyCode, catalog_dir: &PathBuf) {
@@ -399,6 +402,15 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
         }
         CatalogAction::Doctor(name) | CatalogAction::DoctorTool(name) => {
             spawn_doctor(app, &name, catalog_dir);
+        }
+        CatalogAction::Shell(name) => {
+            if name.is_empty() {
+                app.msg = "select a valid environment first".into();
+                app.msg_ticks = 40;
+            } else {
+                app.quit = true;
+                app.msg = format!("SHELL:{}", name);
+            }
         }
     }
 }

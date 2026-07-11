@@ -12,9 +12,15 @@ fn main() {
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("catalog")
                 })
         });
-        if let Err(e) = edash::tui::run(catalog_dir) {
-            eprintln!("error: {}", e);
-            std::process::exit(1);
+        match edash::tui::run(catalog_dir) {
+            Ok(Some(shell_env)) => {
+                let _ = edash::cli::shell::shell(&shell_env, &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("catalog"));
+            }
+            Err(e) => {
+                eprintln!("error: {}", e);
+                std::process::exit(1);
+            }
+            _ => {}
         }
         return;
     }

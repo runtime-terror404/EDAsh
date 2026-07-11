@@ -631,6 +631,14 @@ impl CatalogScreen {
                             None
                         }
                     }
+                    KeyCode::Char('E') => {
+                        let env_count = self.envs.len();
+                        if self.sidebar_idx < env_count {
+                            Some(CatalogAction::Shell(self.envs[self.sidebar_idx].clone()))
+                        } else {
+                            Some(CatalogAction::Shell(String::new()))
+                        }
+                    }
                     _ => None,
                 }
             }
@@ -717,7 +725,7 @@ impl CatalogScreen {
 
     pub fn footer(&self) -> String {
         match self.focus {
-            CatalogFocus::Sidebar => " ←→ switch  ↑↓ move  i install  r remove  / search  ? help  q quit ".into(),
+            CatalogFocus::Sidebar => " ←→ switch  ↑↓ move  i install  r remove  E shell  / search  ? help  q quit ".into(),
             CatalogFocus::Search => " type to filter  ↵/↓ to results  ← sidebar  esc clear  ? help ".into(),
             CatalogFocus::Results => " ↑↓ move  i install  r remove  esc back  / search  ? help  q quit ".into(),
         }
@@ -735,4 +743,5 @@ pub enum CatalogAction {
     RemoveAllPdks,
     Doctor(String),
     DoctorTool(String),
+    Shell(String),
 }
