@@ -83,11 +83,11 @@ impl CatalogScreen {
 
     /// Number of selectable sidebar rows: envs + PDKs + Downloads
     fn sidebar_len(&self) -> usize {
-        self.envs.len() + 2
+        self.envs.len() + 2 // envs + PDKs + Downloads
     }
 
     fn downloads_idx(&self) -> usize {
-        self.envs.len() + 1
+        self.envs.len() + 1 // envs + PDKs
     }
 
     fn in_downloads(&self, idx: usize) -> bool {
@@ -165,7 +165,7 @@ impl CatalogScreen {
     fn draw_sidebar(&self, f: &mut Frame, area: Rect) {
         let mut items: Vec<ListItem> = Vec::new();
 
-        items.push(ListItem::new("Environments").style(Style::new().fg(DIM)));
+        items.push(ListItem::new("  Environments"));
 
         for (i, name) in self.envs.iter().enumerate() {
             let sel = i == self.sidebar_idx && self.focus == CatalogFocus::Sidebar;
@@ -186,9 +186,9 @@ impl CatalogScreen {
                 "◐"
             };
             let txt = if sel {
-                format!("▸   {} {}", name, dot)
+                format!("▸   {:<7} {}", name, dot)
             } else {
-                format!("    {} {}", name, dot)
+                format!("    {:<7} {}", name, dot)
             };
             let style = if sel { Style::new().fg(CYAN) } else { Style::new() };
             items.push(ListItem::new(txt).style(style));
@@ -206,7 +206,8 @@ impl CatalogScreen {
         };
         items.push(ListItem::new(pdk_txt).style(if pdk_sel { Style::new().fg(CYAN) } else { Style::new() }));
 
-        items.push(ListItem::new(""));
+        // Separator before Downloads
+        items.push(ListItem::new("──────────────────────────────────────────────────────").style(Style::new().fg(DIM)));
         let dl_idx = self.downloads_idx();
         let dl_sel = self.sidebar_idx == dl_idx && self.focus == CatalogFocus::Sidebar;
         let active = self.downloads.iter().filter(|d| d.done_ticks == 0 && d.progress < 100).count();
@@ -343,19 +344,32 @@ impl CatalogScreen {
 
     // ── PDK table ──
     fn draw_pdk_table(&self, f: &mut Frame, area: Rect) {
-        let cursor = self.pdk_idx.min(self.pdks.len().saturating_sub(1));
-
-        let header = Row::new(vec!["", "PDK", "Version", "Backend", "Status"]).style(Style::new().fg(DIM));
-
-        let rows: Vec<Row> = self
+        // Filter PDKs by search query
+        let filtered: Vec<(usize, &(String, String, String))> = self
             .pdks
             .iter()
             .enumerate()
-            .map(|(i, (name, variant, status))| {
-                let row_sel = i == cursor && self.focus == CatalogFocus::Results;
-                let prefix = if row_sel { "▸" } else { " " };
-                let row_style = if row_sel { Style::new().fg(CYAN) } else { Style::new() };
-                Row::new(vec![
+            .filter(|(_, (name, _, _))| {
+                self.search_query.is_empty()
+                    || name.to_lowercase().contains(&self.search_query.to_lowercase())
+            })
+            .collect();
+
+        if filtered.is_empty() && !self.search_query.is_empty() {
+            let block = Block::new().borders(Borders::ALL).title(" PDKs ");
+            f.render_widget(Paragraph::new("No PDKs match").block(block), area);
+            return;
+        }
+
+        let cursor = self.pdk_idx.min(filtered.len().saturating_sub(1));
+
+        let header = Row::new(vec!["", "PDK", "Version", "Backend", "Status"]).style(Style::new().fg(DIM));
+
+        let rows: Vec<Row> = filtered.iter().enumerate().map(|(i, (_, (name, variant, status)))| {
+            let is_cursor = i == cursor && self.focus == CatalogFocus::Results;
+            let prefix = if is_cursor { "▸" } else { " " };
+            let row_style = if is_cursor { Style::new().fg(CYAN) } else { Style::new() };
+            Row::new(vec![
                     Cell::from(prefix.to_string()),
                     Cell::from(name.clone()),
                     Cell::from(variant.clone()),
@@ -486,13 +500,11 @@ impl CatalogScreen {
                     KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab | KeyCode::Enter => {
                         if self.in_downloads(self.sidebar_idx) {
                             None
-                        } else if self.sidebar_idx == self.envs.len() {
-                            // PDKs: go directly to Results, skip Search
-                            self.focus = CatalogFocus::Results;
-                            self.pdk_idx = 0;
-                            None
                         } else {
-                            self.focus = CatalogFocus::Search;
+                            // Envs and PDKs: go directly to Results
+                            self.focus = CatalogFocus::Results;
+                            self.tool_idx = 0;
+                            self.pdk_idx = 0;
                             None
                         }
                     }
@@ -530,7 +542,10 @@ impl CatalogScreen {
             CatalogFocus::Results => {
                 let is_pdks = self.sidebar_idx == self.envs.len();
                 if is_pdks {
-                    let n = self.pdks.len();
+                    let filtered_pdks: Vec<&(String, String, String)> = self.pdks.iter()
+                        .filter(|(name, _, _)| self.search_query.is_empty() || name.to_lowercase().contains(&self.search_query.to_lowercase()))
+                        .collect();
+                    let n = filtered_pdks.len();
                     match code {
                         KeyCode::Esc => {
                             self.focus = CatalogFocus::Sidebar;

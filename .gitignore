@@ -44,3 +44,4 @@ edash.lock
 # Scrapped files (kept for reference, not in the project)
 scrap/
 edash_tui_fix_src/
+progress_bar_fix/
