@@ -7,7 +7,8 @@ use crossterm::event::{Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
-use ratatui::widgets::{Block, Borders};
+use ratatui::layout::{Constraint, Layout};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 use screens::catalog::{CatalogAction, CatalogScreen, DownloadItem};
 use std::collections::HashSet;
@@ -31,6 +32,7 @@ struct App {
     progress_tx: std::sync::mpsc::Sender<ProgressEvent>,
     progress_rx: std::sync::mpsc::Receiver<ProgressEvent>,
     downloads: Arc<Mutex<Vec<DownloadItem>>>,
+    last_key_time: std::time::Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +122,7 @@ impl App {
             progress_tx: tx,
             progress_rx: rx,
             downloads: Arc::new(Mutex::new(Vec::new())),
+            last_key_time: std::time::Instant::now(),
         })
     }
 }
@@ -182,6 +185,12 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
             if key.kind == KeyEventKind::Release {
                 continue;
             }
+            // Debounce rapid key repeats (scrolling mice, held keys)
+            let now = std::time::Instant::now();
+            if now.duration_since(app.last_key_time) < std::time::Duration::from_millis(30) {
+                continue;
+            }
+            app.last_key_time = now;
             handle(&mut app, key.code, &catalog_dir);
         }
     }
@@ -454,16 +463,33 @@ fn spawn_install(app: &mut App, name: &str, catalog_dir: &PathBuf) {
 
 fn render(f: &mut Frame, app: &mut App) {
     let area = f.area();
+    let version = env!("CARGO_PKG_VERSION");
+
     let footer = if app.msg_ticks > 0 {
         app.msg_ticks -= 1;
         app.msg.clone()
     } else {
         app.catalog.footer()
     };
-    let block = Block::new().borders(Borders::ALL).title_top(" edash ").title_bottom(footer);
+
+    let block = Block::new().borders(Borders::ALL).title_bottom(footer);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    app.catalog.draw(f, inner);
+
+    // Title (6 lines) then main content
+    let v = Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([Constraint::Length(6), Constraint::Min(1)])
+        .split(inner);
+
+    let ver = format!("{:>67}", format!("v{}", version));
+    let sep = "─".repeat(130);
+    let title = format!(
+        "────┐        ┌──────┐   ┌─┐     ┌────────┐      ┌───────┐ {ver}\n    └────────┘      └───┘ └─────┘        └──────┘       └─────────────────────────────────────────────────────────────────────────\n \u{2007}░█▀▀░█▀▄░█▀█░█▀▀░█░█\n \u{2007}░█▀▀░█░█░█▀█░▀▀█░█▀█                       Unified EDA Package Manager Built on Rust.\n \u{2007}░▀▀▀░▀▀░░▀░▀░▀▀▀░▀░▀\n{sep}"
+    );
+    f.render_widget(Paragraph::new(title), v[0]);
+
+    app.catalog.draw(f, v[1]);
 
     match &app.overlay {
         Some(Overlay::Help) => overlays::help::draw(f, area),

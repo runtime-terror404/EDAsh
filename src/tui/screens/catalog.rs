@@ -32,6 +32,9 @@ pub struct CatalogScreen {
 
     pub focus: CatalogFocus,
     pub show_pdks: bool,
+    pub tool_scroll: usize,
+    pub pdk_scroll: usize,
+    last_visible_rows: usize,
 }
 
 #[derive(Clone)]
@@ -59,6 +62,9 @@ impl CatalogScreen {
             env_tools: HashMap::new(),
             focus: CatalogFocus::Sidebar,
             show_pdks: false,
+            tool_scroll: 0,
+            pdk_scroll: 0,
+            last_visible_rows: 8,  // reasonable default before first draw
         }
     }
 
@@ -95,6 +101,22 @@ impl CatalogScreen {
     }
 
     pub fn rebuild_sidebar(&mut self) {}
+
+    fn visible_rows(area_height: u16) -> usize {
+        area_height.saturating_sub(4) as usize  // header, separator, border padding
+    }
+
+    fn adjust_scroll(idx: usize, scroll: &mut usize, total: usize, visible: usize) {
+        if visible == 0 { return; }
+        if idx >= *scroll + visible {
+            *scroll = idx - visible + 1;
+        }
+        if idx < *scroll {
+            *scroll = idx;
+        }
+        let max_scroll = total.saturating_sub(visible);
+        *scroll = (*scroll).min(max_scroll);
+    }
 
     pub fn refresh_tools(&mut self, tool_names: Vec<String>) {
         if let Some(env) = self.selected_env_name() {
@@ -144,7 +166,7 @@ impl CatalogScreen {
     }
 
     // ── draw ──
-    pub fn draw(&self, f: &mut Frame, area: Rect) {
+    pub fn draw(&mut self, f: &mut Frame, area: Rect) {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Ratio(1, 5), Constraint::Ratio(4, 5)])
@@ -259,7 +281,7 @@ impl CatalogScreen {
     }
 
     // ── content ──
-    fn draw_content(&self, f: &mut Frame, area: Rect) {
+    fn draw_content(&mut self, f: &mut Frame, area: Rect) {
         let is_pdks = self.sidebar_idx == self.envs.len();
         if is_pdks {
             self.draw_pdk_table(f, area);
@@ -280,8 +302,8 @@ impl CatalogScreen {
     }
 
     // ── tool table ──
-    fn draw_tool_table(&self, f: &mut Frame, area: Rect) {
-        let filtered = self.filtered_tools();
+    fn draw_tool_table(&mut self, f: &mut Frame, area: Rect) {
+        let filtered: Vec<String> = self.filtered_tools().iter().map(|s| s.to_string()).collect();
 
         if filtered.is_empty() {
             let env_name = self.envs.get(self.sidebar_idx).map(|s| s.as_str()).unwrap_or("?");
@@ -290,19 +312,36 @@ impl CatalogScreen {
             return;
         }
 
-        let cursor = self.tool_idx.min(filtered.len().saturating_sub(1));
+        // Viewport scrolling — keep cursor in view
+        let total = filtered.len();
+        let visible = (area.height.saturating_sub(4) as usize).max(1).min(total);
+        self.last_visible_rows = visible;
+
+        // Always keep cursor visible
+        if self.tool_idx >= self.tool_scroll + visible {
+            self.tool_scroll = self.tool_idx - visible + 1;
+        } else if self.tool_idx < self.tool_scroll {
+            self.tool_scroll = self.tool_idx;
+        }
+        self.tool_scroll = self.tool_scroll.min(total.saturating_sub(visible));
+
+        let end = (self.tool_scroll + visible).min(total);
+        let window = &filtered[self.tool_scroll..end];
+        let cursor = self.tool_idx;
+        let cursor_visible = self.tool_idx >= self.tool_scroll && self.tool_idx < end;
         let env_name = self.envs.get(self.sidebar_idx).map(|s| s.as_str()).unwrap_or("?");
 
         let header = Row::new(vec!["", "Tool", "Version", "Backend", "Status"]).style(Style::new().fg(DIM));
 
-        let rows: Vec<Row> = filtered
+        let rows: Vec<Row> = window
             .iter()
             .enumerate()
-            .map(|(i, name)| {
+            .map(|(wi, name)| {
+                let i = self.tool_scroll + wi;
                 // Check if this tool is currently downloading
                 let downloading = self.downloads.iter().any(|d| d.name.as_str() == name.as_str() && d.progress < 100);
 
-                let pkg = self.tools.iter().find(|lp| &lp.name == *name);
+                let pkg = self.tools.iter().find(|lp| lp.name == *name);
                 let (version, backend, status_text) = if downloading {
                     ("—".to_string(), "—".to_string(), "◐ installing".to_string())
                 } else if let Some(pkg) = pkg {
@@ -311,7 +350,7 @@ impl CatalogScreen {
                 } else {
                     ("—".to_string(), "—".to_string(), "✗ not installed".to_string())
                 };
-                let row_sel = i == cursor && self.focus == CatalogFocus::Results;
+                let row_sel = cursor_visible && i == cursor && self.focus == CatalogFocus::Results;
                 let prefix = if row_sel { "▸" } else { " " };
                 let row_style = if row_sel { Style::new().fg(CYAN) } else { Style::new() };
                 Row::new(vec![
@@ -343,9 +382,9 @@ impl CatalogScreen {
     }
 
     // ── PDK table ──
-    fn draw_pdk_table(&self, f: &mut Frame, area: Rect) {
-        // Filter PDKs by search query
-        let filtered: Vec<(usize, &(String, String, String))> = self
+    fn draw_pdk_table(&mut self, f: &mut Frame, area: Rect) {
+        // Filter PDKs by search query (clone to avoid borrow issues with scroll)
+        let filtered: Vec<(usize, String, String, String)> = self
             .pdks
             .iter()
             .enumerate()
@@ -353,6 +392,7 @@ impl CatalogScreen {
                 self.search_query.is_empty()
                     || name.to_lowercase().contains(&self.search_query.to_lowercase())
             })
+            .map(|(i, (n, v, s))| (i, n.clone(), v.clone(), s.clone()))
             .collect();
 
         if filtered.is_empty() && !self.search_query.is_empty() {
@@ -361,12 +401,28 @@ impl CatalogScreen {
             return;
         }
 
-        let cursor = self.pdk_idx.min(filtered.len().saturating_sub(1));
+        // Viewport scrolling — keep cursor in view
+        let total = filtered.len();
+        let visible = (area.height.saturating_sub(4) as usize).max(1).min(total);
+        self.last_visible_rows = visible;
+
+        if self.pdk_idx >= self.pdk_scroll + visible {
+            self.pdk_scroll = self.pdk_idx - visible + 1;
+        } else if self.pdk_idx < self.pdk_scroll {
+            self.pdk_scroll = self.pdk_idx;
+        }
+        self.pdk_scroll = self.pdk_scroll.min(total.saturating_sub(visible));
+
+        let end = (self.pdk_scroll + visible).min(total);
+        let window = &filtered[self.pdk_scroll..end];
+        let cursor = self.pdk_idx;
+        let cursor_visible = self.pdk_idx >= self.pdk_scroll && self.pdk_idx < end;
 
         let header = Row::new(vec!["", "PDK", "Version", "Backend", "Status"]).style(Style::new().fg(DIM));
 
-        let rows: Vec<Row> = filtered.iter().enumerate().map(|(i, (_, (name, variant, status)))| {
-            let is_cursor = i == cursor && self.focus == CatalogFocus::Results;
+        let rows: Vec<Row> = window.iter().enumerate().map(|(_wi, (_, name, variant, status))| {
+            let original_idx = _wi + self.pdk_scroll;
+            let is_cursor = cursor_visible && original_idx == cursor && self.focus == CatalogFocus::Results;
             let prefix = if is_cursor { "▸" } else { " " };
             let row_style = if is_cursor { Style::new().fg(CYAN) } else { Style::new() };
             Row::new(vec![
@@ -452,6 +508,7 @@ impl CatalogScreen {
                 KeyCode::Esc => {
                     self.search_query.clear();
                     self.tool_idx = 0;
+                    self.tool_scroll = 0;
                     self.focus = CatalogFocus::Results;
                     None
                 }
@@ -466,11 +523,13 @@ impl CatalogScreen {
                 KeyCode::Backspace => {
                     self.search_query.pop();
                     self.tool_idx = 0;
+                    self.tool_scroll = 0;
                     None
                 }
                 KeyCode::Char(c) => {
                     self.search_query.push(c);
                     self.tool_idx = 0;
+                    self.tool_scroll = 0;
                     None
                 }
                 _ => None,
@@ -487,6 +546,8 @@ impl CatalogScreen {
                         }
                         self.tool_idx = 0;
                         self.pdk_idx = 0;
+                        self.tool_scroll = 0;
+                        self.pdk_scroll = 0;
                         None
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
@@ -495,6 +556,8 @@ impl CatalogScreen {
                         }
                         self.tool_idx = 0;
                         self.pdk_idx = 0;
+                        self.tool_scroll = 0;
+                        self.pdk_scroll = 0;
                         None
                     }
                     KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab | KeyCode::Enter => {
@@ -554,6 +617,8 @@ impl CatalogScreen {
                         KeyCode::Char('j') | KeyCode::Down => {
                             if n > 0 {
                                 self.pdk_idx = (self.pdk_idx + 1) % n;
+                                if self.pdk_idx == 0 { self.pdk_scroll = 0; }
+                                Self::adjust_scroll(self.pdk_idx, &mut self.pdk_scroll, n, self.last_visible_rows);
                             }
                             None
                         }
@@ -562,6 +627,7 @@ impl CatalogScreen {
                                 self.focus = CatalogFocus::Search;
                             } else {
                                 self.pdk_idx -= 1;
+                                Self::adjust_scroll(self.pdk_idx, &mut self.pdk_scroll, n, self.last_visible_rows);
                             }
                             None
                         }
@@ -584,6 +650,8 @@ impl CatalogScreen {
                         KeyCode::Char('j') | KeyCode::Down => {
                             if n > 0 {
                                 self.tool_idx = (self.tool_idx + 1) % n;
+                                if self.tool_idx == 0 { self.tool_scroll = 0; }
+                                Self::adjust_scroll(self.tool_idx, &mut self.tool_scroll, n, self.last_visible_rows);
                             }
                             None
                         }
@@ -592,11 +660,17 @@ impl CatalogScreen {
                                 self.focus = CatalogFocus::Search;
                             } else {
                                 self.tool_idx -= 1;
+                                Self::adjust_scroll(self.tool_idx, &mut self.tool_scroll, n, self.last_visible_rows);
                             }
                             None
                         }
                         KeyCode::Left | KeyCode::Char('h') => {
                             self.focus = CatalogFocus::Sidebar;
+                            None
+                        }
+                        KeyCode::Char('/') => {
+                            self.focus = CatalogFocus::Search;
+                            self.tool_scroll = 0;
                             None
                         }
                         KeyCode::Char('i') | KeyCode::Enter => filtered.get(self.tool_idx).map(|s| CatalogAction::InstallTool(s.to_string())),
