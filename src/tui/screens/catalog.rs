@@ -298,17 +298,15 @@ impl CatalogScreen {
             .iter()
             .enumerate()
             .map(|(i, name)| {
-                let lp = self.tools.iter().find(|lp| &lp.name == *name);
-                let (version, backend, status_text) = if let Some(pkg) = lp {
-                    (
-                        pkg.version.clone(),
-                        pkg.backend.clone(),
-                        if pkg.sha256.is_empty() {
-                            "✓ installed".to_string()
-                        } else {
-                            "✓ verified".to_string()
-                        },
-                    )
+                // Check if this tool is currently downloading
+                let downloading = self.downloads.iter().any(|d| d.name.as_str() == name.as_str() && d.progress < 100);
+
+                let pkg = self.tools.iter().find(|lp| &lp.name == *name);
+                let (version, backend, status_text) = if downloading {
+                    ("—".to_string(), "—".to_string(), "◐ installing".to_string())
+                } else if let Some(pkg) = pkg {
+                    let status = if pkg.sha256.is_empty() { "✓ installed" } else { "✓ verified" };
+                    (pkg.version.clone(), pkg.backend.clone(), status.to_string())
                 } else {
                     ("—".to_string(), "—".to_string(), "✗ not installed".to_string())
                 };
@@ -488,6 +486,11 @@ impl CatalogScreen {
                     KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab | KeyCode::Enter => {
                         if self.in_downloads(self.sidebar_idx) {
                             None
+                        } else if self.sidebar_idx == self.envs.len() {
+                            // PDKs: go directly to Results, skip Search
+                            self.focus = CatalogFocus::Results;
+                            self.pdk_idx = 0;
+                            None
                         } else {
                             self.focus = CatalogFocus::Search;
                             None
@@ -508,7 +511,7 @@ impl CatalogScreen {
                         if self.sidebar_idx < env_count {
                             Some(CatalogAction::RemoveEnv(self.envs[self.sidebar_idx].clone()))
                         } else if self.sidebar_idx == env_count {
-                            self.pdks.get(self.pdk_idx).map(|(name, _, _)| CatalogAction::RemovePdk(name.clone()))
+                            Some(CatalogAction::RemoveAllPdks)
                         } else {
                             None
                         }
@@ -609,6 +612,7 @@ pub enum CatalogAction {
     RemoveEnv(String),
     RemoveTool(String),
     RemovePdk(String),
+    RemoveAllPdks,
     Doctor(String),
     DoctorTool(String),
     Verify,
