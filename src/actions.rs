@@ -139,13 +139,11 @@ fn pdk_family_for_remove(name: &str) -> &str {
 /// Remove all PDKs from disk and lockfile. Returns count removed.
 pub fn remove_all_pdks() -> Result<usize, Box<dyn std::error::Error>> {
     let lock_path = paths::lockfile_path();
-    let mut lockfile = read_lockfile(&lock_path);
+    let lockfile = read_lockfile(&lock_path);
     let names: Vec<String> = lockfile.pdk.keys().cloned().collect();
     let count = names.len();
     for name in &names {
         remove_pdk(name)?;
-        // Re-read lockfile — remove_pdk already removed this entry
-        lockfile = read_lockfile(&lock_path);
     }
     Ok(count)
 }
@@ -153,7 +151,7 @@ pub fn remove_all_pdks() -> Result<usize, Box<dyn std::error::Error>> {
 /// Remove all exclusive tools in an environment. Shared tools stay.
 /// Returns (removed_count, skipped_count).
 pub fn remove_env(
-    env_name: &str,
+    _env_name: &str,
     tool_names: &[String],
     shared_check: impl Fn(&str) -> bool,
 ) -> Result<(usize, usize), Box<dyn std::error::Error>> {

@@ -114,10 +114,6 @@ impl CatalogScreen {
 
     pub fn rebuild_sidebar(&mut self) {}
 
-    fn visible_rows(area_height: u16) -> usize {
-        area_height.saturating_sub(4) as usize  // header, separator, border padding
-    }
-
     fn adjust_scroll(idx: usize, scroll: &mut usize, total: usize, visible: usize) {
         if visible == 0 { return; }
         if idx >= *scroll + visible {
@@ -153,12 +149,6 @@ impl CatalogScreen {
         } else {
             None
         }
-    }
-
-    /// Jump straight to the Downloads row so a just-started install is visible immediately.
-    pub fn jump_to_downloads(&mut self) {
-        self.sidebar_idx = self.downloads_idx();
-        self.focus = CatalogFocus::Sidebar;
     }
 
     pub fn load_lockfile(&mut self) {
@@ -718,7 +708,6 @@ impl CatalogScreen {
                         KeyCode::Char('i') | KeyCode::Enter => filtered.get(self.tool_idx).map(|s| CatalogAction::InstallTool(s.to_string())),
                         KeyCode::Char('r') => filtered.get(self.tool_idx).map(|s| CatalogAction::RemoveTool(s.to_string())),
                         KeyCode::Char('d') => filtered.get(self.tool_idx).map(|s| CatalogAction::DoctorTool(s.to_string())),
-                        KeyCode::Char('v') => Some(CatalogAction::Verify),
                         _ => None,
                     }
                 }
@@ -730,7 +719,7 @@ impl CatalogScreen {
         match self.focus {
             CatalogFocus::Sidebar => " ←→ switch  ↑↓ move  i install  r remove  / search  ? help  q quit ".into(),
             CatalogFocus::Search => " type to filter  ↵/↓ to results  ← sidebar  esc clear  ? help ".into(),
-            CatalogFocus::Results => " ↑↓ move  i install  r remove  v verify  esc back  / search  ? help  q quit ".into(),
+            CatalogFocus::Results => " ↑↓ move  i install  r remove  esc back  / search  ? help  q quit ".into(),
         }
     }
 }
@@ -746,5 +735,4 @@ pub enum CatalogAction {
     RemoveAllPdks,
     Doctor(String),
     DoctorTool(String),
-    Verify,
 }

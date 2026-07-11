@@ -400,10 +400,6 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
         CatalogAction::Doctor(name) | CatalogAction::DoctorTool(name) => {
             spawn_doctor(app, &name, catalog_dir);
         }
-        other => {
-            app.msg = format!("{:?}", other);
-            app.msg_ticks = 40;
-        }
     }
 }
 

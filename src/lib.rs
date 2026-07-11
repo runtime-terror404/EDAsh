@@ -29,10 +29,6 @@ pub enum Command {
         names: Vec<String>,
     },
     List {},
-    Verify {
-        #[arg(short, long)]
-        verbose: bool,
-    },
     Remove {
         names: Vec<String>,
     },
@@ -78,7 +74,6 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             cli::install::install(&names, &catalog_dir).await
         }
         Some(Command::List { .. }) => cli::list::list(&lock_path),
-        Some(Command::Verify { verbose }) => cli::verify::verify(&lock_path, verbose),
         Some(Command::Remove { names }) => cli::remove::remove(&names, &catalog_dir),
         Some(Command::Env { name }) => cli::env::env(&name, &catalog_dir),
         Some(Command::Shell { name }) => cli::shell::shell(&name, &catalog_dir),
@@ -94,7 +89,7 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         None => {
             println!("edash — reproducible EDA toolchain manager");
             println!("Usage: edash <command>");
-            println!("Commands: install, list, verify, remove, env, shell");
+            println!("Commands: install, list, remove, env, shell");
             println!("Run 'edash help' for details.");
             Ok(())
         }

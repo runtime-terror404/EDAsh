@@ -23,7 +23,6 @@ pub fn draw(f: &mut Frame, area: Rect) {
         Line::from(vec![Span::styled("    i            ", k), Span::raw(" install tool")]),
         Line::from(vec![Span::styled("    u            ", k), Span::raw(" update tool")]),
         Line::from(vec![Span::styled("    d            ", k), Span::raw(" run doctor on tool")]),
-        Line::from(vec![Span::styled("    v            ", k), Span::raw(" verify")]),
         Line::from(vec![Span::styled("    ↵            ", k), Span::raw(" install / open")]),
         Line::from(vec![Span::raw("")]),
         Line::from(vec![Span::styled("  Search", k), Span::raw("")]),

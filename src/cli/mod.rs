@@ -8,5 +8,4 @@ pub mod outdated;
 pub mod remove;
 pub mod search;
 pub mod shell;
-pub mod verify;
 pub mod why;
