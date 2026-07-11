@@ -35,6 +35,16 @@ pub struct CatalogScreen {
     pub tool_scroll: usize,
     pub pdk_scroll: usize,
     last_visible_rows: usize,
+    pub doctor_results: Vec<DoctorLine>,
+    pub doctor_running: bool,
+}
+
+#[derive(Clone)]
+pub struct DoctorLine {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
+    pub elapsed: f64,
 }
 
 #[derive(Clone)]
@@ -64,7 +74,9 @@ impl CatalogScreen {
             show_pdks: false,
             tool_scroll: 0,
             pdk_scroll: 0,
-            last_visible_rows: 8,  // reasonable default before first draw
+            last_visible_rows: 8,
+            doctor_results: Vec::new(),
+            doctor_running: false,
         }
     }
 
@@ -282,6 +294,10 @@ impl CatalogScreen {
 
     // ── content ──
     fn draw_content(&mut self, f: &mut Frame, area: Rect) {
+        if self.doctor_running || !self.doctor_results.is_empty() {
+            self.draw_doctor_results(f, area);
+            return;
+        }
         let is_pdks = self.sidebar_idx == self.envs.len();
         if is_pdks {
             self.draw_pdk_table(f, area);
@@ -289,6 +305,26 @@ impl CatalogScreen {
             self.draw_download_queue(f, area);
         } else if self.sidebar_idx < self.envs.len() {
             self.draw_tool_table(f, area);
+        }
+    }
+
+    fn draw_doctor_results(&self, f: &mut Frame, area: Rect) {
+        let title = if self.doctor_running { " doctor: running... " } else { " doctor: complete " };
+        let items: Vec<ListItem> = self.doctor_results.iter().map(|r| {
+            let glyph = if r.passed { "✓" } else { "✗" };
+            let line = format!("  {} {:<20} {:<40} ({:.1}s)", glyph, r.name, r.detail, r.elapsed);
+            ListItem::new(line)
+        }).collect();
+
+        if self.doctor_running && !self.doctor_results.is_empty() {
+            let passed = self.doctor_results.iter().filter(|r| r.passed).count();
+            let total = self.doctor_results.len();
+            let summary = format!("  {} passed, {} failed", passed, total - passed);
+            let mut all = vec![ListItem::new(summary), ListItem::new("")];
+            all.extend(items);
+            f.render_widget(List::new(all).block(Block::new().borders(Borders::ALL).title(title)), area);
+        } else {
+            f.render_widget(List::new(items).block(Block::new().borders(Borders::ALL).title(title)), area);
         }
     }
 
@@ -497,6 +533,12 @@ impl CatalogScreen {
     pub fn handle(&mut self, code: ratatui::crossterm::event::KeyCode) -> Option<CatalogAction> {
         use ratatui::crossterm::event::KeyCode;
 
+        // Esc or any nav clears completed doctor results
+        if !self.doctor_running && !self.doctor_results.is_empty() {
+            self.doctor_results.clear();
+            return None;
+        }
+
         // Global: enter search from anywhere in the catalog screen
         if code == KeyCode::Char('/') && self.focus != CatalogFocus::Search {
             self.focus = CatalogFocus::Search;
@@ -686,9 +728,9 @@ impl CatalogScreen {
 
     pub fn footer(&self) -> String {
         match self.focus {
-            CatalogFocus::Sidebar => " ←→/tab switch  ↑↓/jk move  i install  r remove  d doctor  / search  ? help  q quit ".into(),
+            CatalogFocus::Sidebar => " ←→ switch  ↑↓ move  i install  r remove  / search  ? help  q quit ".into(),
             CatalogFocus::Search => " type to filter  ↵/↓ to results  ← sidebar  esc clear  ? help ".into(),
-            CatalogFocus::Results => " ↑↓/jk move  i install  r remove  d doctor  v verify  esc back  ? help  q quit ".into(),
+            CatalogFocus::Results => " ↑↓ move  i install  r remove  v verify  esc back  / search  ? help  q quit ".into(),
         }
     }
 }

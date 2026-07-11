@@ -22,6 +22,7 @@ pub fn run_check(tool: &str, bin: &str) -> CheckResult {
         "ngspice" => check_ngspice(bin),
         "xyce" => check_xyce(bin),
         "sby" => check_sby(bin),
+        "gaw" => (true, "GUI app — binary present".into()),
         _ => check_version(bin),
     };
     CheckResult {

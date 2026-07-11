@@ -8,9 +8,11 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout};
+use ratatui::style::{Color, Style};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
-use screens::catalog::{CatalogAction, CatalogScreen, DownloadItem};
+use screens::catalog::{CatalogAction, CatalogScreen, DoctorLine, DownloadItem};
 use std::collections::HashSet;
 use std::io::stdout;
 use std::path::PathBuf;
@@ -142,13 +144,44 @@ pub fn run(catalog_dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 
         // Drain progress events from all background threads
         while let Ok(ev) = app.progress_rx.try_recv() {
+            let stage = ev.stage.clone();
+
+            // Doctor events are handled separately — never touch downloads
+            let is_doctor = app.catalog.doctor_running
+                || stage.starts_with("PASS|") || stage.starts_with("FAIL|")
+                || stage == "PNF" || stage == "DONE";
+            if is_doctor {
+                if stage == "DONE" {
+                    app.catalog.doctor_running = false;
+                } else if stage == "PNF" {
+                    app.catalog.doctor_results.push(DoctorLine {
+                        name: ev.tool.clone(), passed: false, detail: "binary not found".into(), elapsed: 0.0,
+                    });
+                } else if let Some(rest) = stage.strip_prefix("PASS|") {
+                    let parts: Vec<&str> = rest.splitn(2, '|').collect();
+                    app.catalog.doctor_results.push(DoctorLine {
+                        name: ev.tool.clone(), passed: true,
+                        detail: parts.get(1).unwrap_or(&"").to_string(),
+                        elapsed: parts[0].parse().unwrap_or(0.0),
+                    });
+                } else if let Some(rest) = stage.strip_prefix("FAIL|") {
+                    let parts: Vec<&str> = rest.splitn(2, '|').collect();
+                    app.catalog.doctor_results.push(DoctorLine {
+                        name: ev.tool.clone(), passed: false,
+                        detail: parts.get(1).unwrap_or(&"").to_string(),
+                        elapsed: parts[0].parse().unwrap_or(0.0),
+                    });
+                }
+                continue;
+            }
+
             if let Ok(mut dls) = app.downloads.lock() {
                 if let Some(dl) = dls.iter_mut().find(|d| d.name == ev.tool) {
-                    dl.stage = ev.stage.clone();
+                    dl.stage = stage.clone();
                     dl.progress = if ev.done { 100 } else { dl.progress.saturating_add(3).min(95) };
                     dl.done_ticks = if ev.done { 10 } else { 0 };
                 } else if !ev.done {
-                    dls.push(DownloadItem { name: ev.tool.clone(), progress: 5, stage: ev.stage, done_ticks: 0 });
+                    dls.push(DownloadItem { name: ev.tool.clone(), progress: 5, stage: stage.clone(), done_ticks: 0 });
                 }
             }
             if ev.done && ev.error.is_none() {
@@ -364,6 +397,9 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
             }
             app.msg_ticks = 40;
         }
+        CatalogAction::Doctor(name) | CatalogAction::DoctorTool(name) => {
+            spawn_doctor(app, &name, catalog_dir);
+        }
         other => {
             app.msg = format!("{:?}", other);
             app.msg_ticks = 40;
@@ -398,6 +434,67 @@ fn spawn_pdk_install(app: &mut App, name: &str, _catalog_dir: &PathBuf) {
                 let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
             }
         }
+    });
+}
+
+fn spawn_doctor(app: &mut App, name: &str, catalog_dir: &PathBuf) {
+    let name = name.to_string();
+    let cd = catalog_dir.clone();
+    let tx = app.progress_tx.clone();
+
+    app.catalog.doctor_running = true;
+    app.catalog.doctor_results.clear();
+
+    thread::spawn(move || {
+        let resolver = match crate::catalog::resolver::Resolver::load(&cd) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
+                return;
+            }
+        };
+        let items = match resolver.resolve(&name) {
+            Ok(i) => i,
+            Err(e) => {
+                let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
+                return;
+            }
+        };
+        let envs_dir = crate::paths::envs_dir();
+
+        for item in &items {
+            let req = match item {
+                crate::catalog::index::ResolvedItem::Tool(r) => r,
+                _ => continue,
+            };
+            let bin_dir = match req.backend {
+                crate::catalog::index::BackendKind::OssCadSuite => envs_dir.join("oss-cad-suite").join("bin"),
+                _ => envs_dir.join(format!("_{}", req.name)).join("bin"),
+            };
+            let bin_name = match req.name.as_str() {
+                "xyce" => "Xyce",
+                "nextpnr" => "nextpnr-ecp5",
+                "icestorm" => "icepack",
+                "prjtrellis" => "ecppack",
+                "openfpgaloader" => "openFPGALoader",
+                _ => &req.name,
+            };
+            let bin_path = bin_dir.join(bin_name);
+
+            if !bin_path.exists() {
+                let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "PNF".into(), done: false, error: None });
+                continue;
+            }
+
+            let result = crate::doctor::checks::run_check(&req.name, &bin_path.to_string_lossy());
+            let _ = tx.send(ProgressEvent {
+                tool: req.name.clone(),
+                stage: format!("{}|{:.1}|{}", if result.passed { "PASS" } else { "FAIL" }, result.duration_ms as f64 / 1000.0, result.detail),
+                done: false,
+                error: if result.passed { None } else { Some(result.detail.clone()) },
+            });
+        }
+        let _ = tx.send(ProgressEvent { tool: name.clone(), stage: "DONE".into(), done: true, error: None });
     });
 }
 
@@ -465,22 +562,48 @@ fn render(f: &mut Frame, app: &mut App) {
     let area = f.area();
     let version = env!("CARGO_PKG_VERSION");
 
-    let footer = if app.msg_ticks > 0 {
+    let footer_text = if app.msg_ticks > 0 {
         app.msg_ticks -= 1;
         app.msg.clone()
     } else {
         app.catalog.footer()
     };
 
-    let block = Block::new().borders(Borders::ALL).title_bottom(footer);
+    let block = Block::new().borders(Borders::ALL);
     let inner = block.inner(area);
     f.render_widget(block, area);
+
+    // Footer with dim action names
+    let footer_line = ratatui::text::Line::from(
+        footer_text
+            .split_whitespace()
+            .enumerate()
+            .map(|(i, word)| {
+                let is_key = i % 2 == 0 || word == "i" || word == "r" || word == "/" || word == "?" || word == "q";
+                if is_key || word.starts_with('←') || word.starts_with('↑') || word.starts_with('→') || word.starts_with('↓') || word == "i" || word == "r" || word == "/" || word == "?" || word == "q" || word == "v" || word.starts_with("↵") {
+                    Span::raw(format!("{} ", word))
+                } else {
+                    Span::styled(format!("{} ", word), Style::new().fg(Color::Rgb(120, 120, 120)))
+                }
+            })
+            .collect::<Vec<Span>>(),
+    );
+    let footer_area = Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner)[1];
+    f.render_widget(Paragraph::new(footer_line), footer_area);
+
+    let content_area = Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner)[0];
 
     // Title (6 lines) then main content
     let v = Layout::default()
         .direction(ratatui::layout::Direction::Vertical)
         .constraints([Constraint::Length(6), Constraint::Min(1)])
-        .split(inner);
+        .split(content_area);
 
     let ver = format!("{:>67}", format!("v{}", version));
     let sep = "─".repeat(130);
