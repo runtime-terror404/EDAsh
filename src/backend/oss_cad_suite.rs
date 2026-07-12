@@ -23,7 +23,7 @@ impl OssCadSuiteBackend {
         self.install_dir.join("environment").exists()
     }
 
-    fn latest_download_url() -> Result<String, Box<dyn std::error::Error>> {
+    fn latest_release_info() -> Result<(String, u64), Box<dyn std::error::Error>> {
         let output = Command::new("curl")
             .args(["-s", API_URL])
             .output()
@@ -41,7 +41,19 @@ impl OssCadSuiteBackend {
         let url = format!(
             "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/{tag}/{filename}"
         );
-        Ok(url)
+
+        // Extract exact byte size from the assets array
+        let expected_size = json["assets"]
+            .as_array()
+            .and_then(|assets| {
+                assets.iter().find(|a| {
+                    a["name"].as_str().map_or(false, |n| n == filename.as_str())
+                })
+            })
+            .and_then(|asset| asset["size"].as_u64())
+            .unwrap_or(0);
+
+        Ok((url, expected_size))
     }
 
     pub fn install_package(
@@ -66,14 +78,34 @@ impl OssCadSuiteBackend {
         &self,
         progress: &ProgressTx,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let url = Self::latest_download_url()?;
+        let (url, expected_size) = Self::latest_release_info()?;
         let cache_dir = paths::cache_dir();
         std::fs::create_dir_all(&cache_dir)?;
 
         let filename = url.rsplit('/').next().unwrap_or("oss-cad-suite.tgz");
         let cache_path = cache_dir.join(filename);
 
-        if !cache_path.exists() {
+        // Skip download if cached file matches expected size
+        let need_download = !cache_path.exists()
+            || (expected_size > 0 && std::fs::metadata(&cache_path).map(|m| m.len()).unwrap_or(0) != expected_size);
+
+        if need_download {
+            // Remove old cached tarballs before downloading new one
+            if expected_size > 0 {
+                if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.is_file() && p != cache_path {
+                            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                                if name.starts_with("oss-cad-suite-linux-x64-") && name.ends_with(".tgz") {
+                                    let _ = std::fs::remove_file(&p);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             let _ = progress.send(Progress::Stage("downloading oss-cad-suite (~1.5GB)".into()));
 
             let output = Command::new("curl")
