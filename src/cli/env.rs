@@ -34,10 +34,25 @@ pub fn env(
         }
     }
 
-    // Add PDK_ROOT if any PDKs are installed
+    // PDK vars: PDK_ROOT + per-PDK path variables
     let pdks_dir = paths::pdks_dir();
+    let lock_path = paths::lockfile_path();
     if pdks_dir.exists() {
         println!("export PDK_ROOT={}", pdks_dir.display());
+
+        if lock_path.exists() {
+            if let Ok(lf) = crate::lockfile::writer::read_lockfile(&lock_path) {
+                let installed_pdks: Vec<String> = lf.pdk.keys().cloned().collect();
+                if !installed_pdks.is_empty() {
+                    let pdk_vars = crate::pdk::config::resolve_pdk_vars(
+                        &installed_pdks, catalog_dir, &pdks_dir,
+                    );
+                    for (var, val) in &pdk_vars {
+                        println!("export {}={}", var, val);
+                    }
+                }
+            }
+        }
     }
 
     println!("export PATH={}:${{PATH}}", paths.join(":"));

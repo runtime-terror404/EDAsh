@@ -1,0 +1,8 @@
+name: sky130
+variant: sky130A
+paths:
+  spice_dir: libs.tech/ngspice
+  netgen_setup: libs.tech/netgen/sky130A_setup.tcl
+  magic_rcfile: libs.tech/magic/sky130A.magicrc
+  xschem_rcfile: libs.tech/xschem/xschemrc
+  klayout_tech: libs.tech/klayout

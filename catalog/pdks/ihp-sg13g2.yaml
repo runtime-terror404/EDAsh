@@ -1,0 +1,8 @@
+name: ihp-sg13g2
+variant: ihp-sg13g2
+paths:
+  spice_dir: libs.tech/ngspice
+  netgen_setup: libs.tech/netgen/ihp-sg13g2_setup.tcl
+  magic_rcfile: libs.tech/magic/ihp-sg13g2.magicrc
+  xschem_rcfile: libs.tech/xschem/xschemrc
+  klayout_tech: libs.tech/klayout/tech

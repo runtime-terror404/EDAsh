@@ -58,6 +58,11 @@ pub enum Command {
         #[arg(short, long)]
         format: String,
     },
+    Pdk {
+        name: Option<String>,
+        #[arg(long)]
+        names_only: bool,
+    },
 }
 
 pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
@@ -85,6 +90,9 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Some(Command::Cache { .. }) => cli::clean::cache(),
         Some(Command::Export { name, format }) => {
             cli::export::export(&name, &format, &catalog_dir)
+        }
+        Some(Command::Pdk { name, names_only }) => {
+            cli::pdk::pdk(name.as_deref(), &catalog_dir, names_only)
         }
         None => {
             println!("edash — reproducible EDA toolchain manager");

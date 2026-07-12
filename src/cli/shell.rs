@@ -64,6 +64,17 @@ pub fn shell(
     let pdks_dir = paths::pdks_dir();
     if pdks_dir.exists() {
         cmd.env("PDK_ROOT", pdks_dir.to_string_lossy().as_ref());
+
+        // Set per-PDK path variables
+        let installed_pdks: Vec<String> = lockfile.pdk.keys().cloned().collect();
+        if !installed_pdks.is_empty() {
+            let pdk_vars = crate::pdk::config::resolve_pdk_vars(
+                &installed_pdks, catalog_dir, &pdks_dir,
+            );
+            for (var, val) in &pdk_vars {
+                cmd.env(var.as_str(), val.as_str());
+            }
+        }
     }
 
     let status = cmd.status()?;

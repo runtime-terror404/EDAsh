@@ -1,0 +1,8 @@
+name: gf180
+variant: gf180mcuD
+paths:
+  spice_dir: libs.tech/ngspice
+  netgen_setup: libs.tech/netgen/gf180mcuD_setup.tcl
+  magic_rcfile: libs.tech/magic/gf180mcuD.magicrc
+  xschem_rcfile: libs.tech/xschem/xschemrc
+  klayout_tech: libs.tech/klayout/tech

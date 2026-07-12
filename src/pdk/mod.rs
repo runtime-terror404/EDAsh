@@ -1,4 +1,5 @@
 pub mod ciel;
+pub mod config;
 
 #[derive(Debug, Clone)]
 pub struct PdkRequest {
