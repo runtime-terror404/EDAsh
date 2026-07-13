@@ -1,13 +1,13 @@
 use crate::catalog::index::ResolvedItem;
 use crate::catalog::resolver::Resolver;
-use std::path::PathBuf;
+use crate::catalog::CatalogSource;
 
 pub fn export(
     name: &str,
     format: &str,
-    catalog_dir: &PathBuf,
+    source: &CatalogSource,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resolver = Resolver::load(catalog_dir)?;
+    let resolver = Resolver::load_from(source)?;
     let items = resolver.resolve(name)?;
 
     let tools: Vec<_> = items

@@ -1,16 +1,16 @@
 use crate::catalog::index::ResolvedItem;
 use crate::catalog::resolver::Resolver;
+use crate::catalog::CatalogSource;
 use crate::lockfile::schema::Lockfile;
 use crate::paths;
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::process::Command;
 
 pub fn shell(
     name: &str,
-    catalog_dir: &PathBuf,
+    source: &CatalogSource,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resolver = Resolver::load(catalog_dir)?;
+    let resolver = Resolver::load_from(source)?;
 
     let items = resolver.resolve(name)?;
     let envs_dir = paths::envs_dir();
@@ -69,7 +69,7 @@ pub fn shell(
         let installed_pdks: Vec<String> = lockfile.pdk.keys().cloned().collect();
         if !installed_pdks.is_empty() {
             let pdk_vars = crate::pdk::config::resolve_pdk_vars(
-                &installed_pdks, catalog_dir, &pdks_dir,
+                &installed_pdks, source, &pdks_dir,
             );
             for (var, val) in &pdk_vars {
                 cmd.env(var.as_str(), val.as_str());

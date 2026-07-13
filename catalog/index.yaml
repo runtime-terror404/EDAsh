@@ -6,4 +6,4 @@ environments:
 pdks:
   sky130: { manager: ciel, variant: sky130A }
   gf180: { manager: ciel, variant: gf180mcuD }
-  ihp-sg13g2: { manager: ciel, variant: sg13g2 }
+  ihp-sg13g2: { manager: ciel, variant: ihp-sg13g2 }

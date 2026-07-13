@@ -35,3 +35,19 @@ pub fn logs_dir() -> PathBuf {
 pub fn lockfile_path() -> PathBuf {
     data_dir().join("edash.lock")
 }
+
+pub fn catalog_base_dir() -> PathBuf {
+    data_dir().join("catalog").join("base")
+}
+
+pub fn catalog_user_dir() -> PathBuf {
+    config_dir().join("catalog").join("user")
+}
+
+pub fn downloads_dir() -> PathBuf {
+    data_dir().join("downloads")
+}
+
+pub fn installation_yaml_path() -> PathBuf {
+    data_dir().join("installation.yaml")
+}

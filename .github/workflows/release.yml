@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            asset-suffix: x86_64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-gnu
+            asset-suffix: aarch64-unknown-linux-gnu
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package catalog
+        run: |
+          cd catalog
+          tar -czf ../catalog.tar.gz .
+          cd ..
+          # Generate manifest with sha256 per file
+          echo "schema: 1" > manifest.yaml
+          echo "catalog_version: ${GITHUB_REF_NAME}" >> manifest.yaml
+          echo "release: ${GITHUB_REF_NAME}" >> manifest.yaml
+          echo "minimum_edash: 0.1.0" >> manifest.yaml
+          echo "generated_by: edash-ci" >> manifest.yaml
+          echo "generated_at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> manifest.yaml
+          echo "files:" >> manifest.yaml
+          for f in $(find catalog -type f | sort); do
+            hash=$(sha256sum "$f" | cut -d' ' -f1)
+            echo "  ${f}: sha256:${hash}" >> manifest.yaml
+          done
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/${{ matrix.target }}/release/edash
+            catalog.tar.gz
+            manifest.yaml
+            install.sh
+          name: ${{ github.ref_name }}
+          generate_release_notes: true

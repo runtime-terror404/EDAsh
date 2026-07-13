@@ -3,6 +3,7 @@ mod overlays;
 pub mod widgets;
 
 use crate::catalog::resolver::Resolver;
+use crate::catalog::CatalogSource;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
@@ -15,7 +16,6 @@ use ratatui::{Frame, Terminal};
 use screens::catalog::{CatalogAction, CatalogScreen, DoctorLine, DownloadItem};
 use std::collections::HashSet;
 use std::io::stdout;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -102,11 +102,11 @@ fn confirm_message(resolver: &Resolver, action: &CatalogAction) -> Option<String
 }
 
 impl App {
-    fn new(catalog_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-        let resolver = Resolver::load(&catalog_dir)?;
+    fn new(source: CatalogSource) -> Result<Self, Box<dyn std::error::Error>> {
+        let resolver = Resolver::load_from(&source)?;
         let mut envs = resolver.list_environments();
         envs.sort();
-        let mut catalog = CatalogScreen::new(envs.clone());
+        let mut catalog = CatalogScreen::new(envs.clone(), &source);
         catalog.rebuild_sidebar();
         for env in &envs {
             let names = resolve_tool_names(&resolver, env);
@@ -129,8 +129,8 @@ impl App {
     }
 }
 
-pub fn run(catalog_dir: PathBuf) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let mut app = App::new(catalog_dir.clone())?;
+pub fn run(source: CatalogSource) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let mut app = App::new(source.clone())?;
     enable_raw_mode()?;
     let mut out = stdout();
     out.execute(EnterAlternateScreen)?;
@@ -231,18 +231,18 @@ pub fn run(catalog_dir: PathBuf) -> Result<Option<String>, Box<dyn std::error::E
                 continue;
             }
             app.last_key_time = now;
-            handle(&mut app, key.code, &catalog_dir);
+            handle(&mut app, key.code, &source);
         }
     }
 }
 
-fn handle(app: &mut App, code: KeyCode, catalog_dir: &PathBuf) {
+fn handle(app: &mut App, code: KeyCode, source: &CatalogSource) {
     // Confirm overlay intercepts everything until resolved.
     if matches!(app.overlay, Some(Overlay::Confirm(_, _))) {
         match code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 if let Some(Overlay::Confirm(action, _)) = app.overlay.take() {
-                    apply_action(app, action, catalog_dir);
+                    apply_action(app, action, source);
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -289,12 +289,12 @@ fn handle(app: &mut App, code: KeyCode, catalog_dir: &PathBuf) {
         if let Some(msg) = confirm_message(&app.resolver, &action) {
             app.overlay = Some(Overlay::Confirm(action, msg));
         } else {
-            apply_action(app, action, catalog_dir);
+            apply_action(app, action, source);
         }
     }
 }
 
-fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
+fn apply_action(app: &mut App, action: CatalogAction, source: &CatalogSource) {
     match action {
         CatalogAction::InstallEnv(name) => {
             app.msg = format!("Installing {}...", name);
@@ -308,7 +308,7 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
             }
             app.catalog.downloads = app.downloads.lock().unwrap().clone();
             app.catalog.rebuild_sidebar();
-            spawn_install(app, &name, catalog_dir);
+            spawn_install(app, &name, source);
         }
         CatalogAction::InstallTool(name) => {
             // Skip if already installed or already queued
@@ -329,12 +329,12 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
                 .unwrap()
                 .push(DownloadItem { name: name.clone(), progress: 0, stage: "queued".into(), done_ticks: 0 });
             app.catalog.downloads = app.downloads.lock().unwrap().clone();
-            spawn_install(app, &name, catalog_dir);
+            spawn_install(app, &name, source);
         }
         CatalogAction::InstallPdk(name) => {
             app.msg = format!("Installing PDK {}...", name);
             app.msg_ticks = 80;
-            spawn_pdk_install(app, &name, catalog_dir);
+            spawn_pdk_install(app, &name, source);
         }
         CatalogAction::RemoveEnv(name) => {
             let tool_names = resolve_tool_names(&app.resolver, &name);
@@ -401,7 +401,7 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
             app.msg_ticks = 40;
         }
         CatalogAction::Doctor(name) | CatalogAction::DoctorTool(name) => {
-            spawn_doctor(app, &name, catalog_dir);
+            spawn_doctor(app, &name, source);
         }
         CatalogAction::Shell(name) => {
             if name.is_empty() {
@@ -415,7 +415,7 @@ fn apply_action(app: &mut App, action: CatalogAction, catalog_dir: &PathBuf) {
     }
 }
 
-fn spawn_pdk_install(app: &mut App, name: &str, _catalog_dir: &PathBuf) {
+fn spawn_pdk_install(app: &mut App, name: &str, _source: &CatalogSource) {
     let name = name.to_string();
     let tx = app.progress_tx.clone();
     let dl = Arc::clone(&app.downloads);
@@ -445,16 +445,16 @@ fn spawn_pdk_install(app: &mut App, name: &str, _catalog_dir: &PathBuf) {
     });
 }
 
-fn spawn_doctor(app: &mut App, name: &str, catalog_dir: &PathBuf) {
+fn spawn_doctor(app: &mut App, name: &str, source: &CatalogSource) {
     let name = name.to_string();
-    let cd = catalog_dir.clone();
+    let src = source.clone();
     let tx = app.progress_tx.clone();
 
     app.catalog.doctor_running = true;
     app.catalog.doctor_results.clear();
 
     thread::spawn(move || {
-        let resolver = match crate::catalog::resolver::Resolver::load(&cd) {
+        let resolver = match crate::catalog::resolver::Resolver::load_from(&src) {
             Ok(r) => r,
             Err(e) => {
                 let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });
@@ -506,14 +506,14 @@ fn spawn_doctor(app: &mut App, name: &str, catalog_dir: &PathBuf) {
     });
 }
 
-fn spawn_install(app: &mut App, name: &str, catalog_dir: &PathBuf) {
+fn spawn_install(app: &mut App, name: &str, source: &CatalogSource) {
     let name = name.to_string();
-    let cd = catalog_dir.clone();
+    let src = source.clone();
     let tx = app.progress_tx.clone();
     let dl = Arc::clone(&app.downloads);
 
     thread::spawn(move || {
-        let resolver = match Resolver::load(&cd) {
+        let resolver = match Resolver::load_from(&src) {
             Ok(r) => r,
             Err(e) => {
                 let _ = tx.send(ProgressEvent { tool: name.clone(), stage: e.to_string(), done: true, error: Some(e.to_string()) });

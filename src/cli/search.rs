@@ -1,11 +1,11 @@
 use crate::catalog::resolver::Resolver;
-use std::path::PathBuf;
+use crate::catalog::CatalogSource;
 
 pub fn search(
     query: &str,
-    catalog_dir: &PathBuf,
+    source: &CatalogSource,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resolver = Resolver::load(catalog_dir)?;
+    let resolver = Resolver::load_from(source)?;
     let results = resolver.search(query);
 
     if results.is_empty() {

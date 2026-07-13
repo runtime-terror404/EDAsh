@@ -1,17 +1,16 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct PdkToolConfig {
     pub name: String,
     pub variant: String,
     pub paths: HashMap<String, String>,
 }
 
-/// Load a PDK config from catalog/pdks/<name>.yaml.
-pub fn load_pdk_config(pdk_name: &str, catalog_dir: &Path) -> Option<PdkToolConfig> {
-    let path = catalog_dir.join("pdks").join(format!("{}.yaml", pdk_name));
-    let content = std::fs::read_to_string(&path).ok()?;
+/// Load a PDK config from the catalog source.
+pub fn load_pdk_config(pdk_name: &str, source: &crate::catalog::CatalogSource) -> Option<PdkToolConfig> {
+    let content = source.read_pdk_config(pdk_name)?;
     serde_yaml::from_str(&content).ok()
 }
 
@@ -19,13 +18,13 @@ pub fn load_pdk_config(pdk_name: &str, catalog_dir: &Path) -> Option<PdkToolConf
 /// Returns map of ENV_VAR_NAME → full_path_value.
 pub fn resolve_pdk_vars(
     installed_pdks: &[String],
-    catalog_dir: &Path,
+    source: &crate::catalog::CatalogSource,
     pdk_root: &Path,
 ) -> HashMap<String, String> {
     let mut vars: HashMap<String, String> = HashMap::new();
 
     for pdk_name in installed_pdks {
-        let Some(config) = load_pdk_config(pdk_name, catalog_dir) else {
+        let Some(config) = load_pdk_config(pdk_name, source) else {
             continue;
         };
 

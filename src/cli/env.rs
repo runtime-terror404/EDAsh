@@ -1,14 +1,14 @@
 use crate::catalog::index::ResolvedItem;
 use crate::catalog::resolver::Resolver;
+use crate::catalog::CatalogSource;
 use crate::paths;
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 pub fn env(
     name: &str,
-    catalog_dir: &PathBuf,
+    source: &CatalogSource,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resolver = Resolver::load(catalog_dir)?;
+    let resolver = Resolver::load_from(source)?;
     let items = resolver.resolve(name)?;
     let envs_dir = paths::envs_dir();
 
@@ -45,7 +45,7 @@ pub fn env(
                 let installed_pdks: Vec<String> = lf.pdk.keys().cloned().collect();
                 if !installed_pdks.is_empty() {
                     let pdk_vars = crate::pdk::config::resolve_pdk_vars(
-                        &installed_pdks, catalog_dir, &pdks_dir,
+                        &installed_pdks, source, &pdks_dir,
                     );
                     for (var, val) in &pdk_vars {
                         println!("export {}={}", var, val);

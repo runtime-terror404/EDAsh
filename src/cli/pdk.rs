@@ -1,9 +1,9 @@
+use crate::catalog::CatalogSource;
 use crate::paths;
-use std::path::PathBuf;
 
 pub fn pdk(
     name: Option<&str>,
-    catalog_dir: &PathBuf,
+    source: &CatalogSource,
     names_only: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let lock_path = paths::lockfile_path();
@@ -15,21 +15,7 @@ pub fn pdk(
         Vec::new()
     };
 
-    let available: Vec<String> = std::fs::read_dir(catalog_dir.join("pdks"))
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter_map(|e| {
-                    let p = e.path();
-                    if p.extension().map_or(false, |ext| ext == "yaml") {
-                        p.file_stem()?.to_str().map(String::from)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let available: Vec<String> = source.list_pdk_names();
 
     // No arg: summary
     let Some(name) = name else {
@@ -37,7 +23,7 @@ pub fn pdk(
         if !installed.is_empty() {
             println!("Installed PDKs:");
             for pdk in &installed {
-                let variant = crate::pdk::config::load_pdk_config(pdk, catalog_dir)
+                let variant = crate::pdk::config::load_pdk_config(pdk, source)
                     .map(|c| c.variant)
                     .unwrap_or_else(|| "?".into());
                 println!("  {:<16} ({})", pdk, variant);
@@ -67,7 +53,7 @@ pub fn pdk(
     };
 
     // Specific PDK
-    let Some(config) = crate::pdk::config::load_pdk_config(name, catalog_dir) else {
+    let Some(config) = crate::pdk::config::load_pdk_config(name, source) else {
         if available.contains(&name.to_string()) {
             eprintln!("'{}' configuration file not found in catalog/pdks/", name);
         } else {
@@ -84,7 +70,7 @@ pub fn pdk(
 
     if names_only {
         let pdk_root = paths::pdks_dir();
-        let pdk_vars = crate::pdk::config::resolve_pdk_vars(&[name.to_string()], catalog_dir, &pdk_root);
+        let pdk_vars = crate::pdk::config::resolve_pdk_vars(&[name.to_string()], source, &pdk_root);
         for var in pdk_vars.keys() {
             println!("{}", var);
         }
@@ -97,7 +83,7 @@ pub fn pdk(
     }
 
     let pdk_root = paths::pdks_dir();
-    let pdk_vars = crate::pdk::config::resolve_pdk_vars(&[name.to_string()], catalog_dir, &pdk_root);
+    let pdk_vars = crate::pdk::config::resolve_pdk_vars(&[name.to_string()], source, &pdk_root);
 
     if pdk_vars.is_empty() {
         println!("  No verified paths found for this PDK.");

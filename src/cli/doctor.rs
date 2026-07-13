@@ -1,14 +1,14 @@
 use crate::catalog::index::ResolvedItem;
 use crate::catalog::resolver::Resolver;
+use crate::catalog::CatalogSource;
 use crate::doctor::checks;
 use crate::paths;
-use std::path::PathBuf;
 
 pub fn doctor(
     name: &str,
-    catalog_dir: &PathBuf,
+    source: &CatalogSource,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resolver = Resolver::load(catalog_dir)?;
+    let resolver = Resolver::load_from(source)?;
     let items = resolver.resolve(name)?;
     let envs_dir = paths::envs_dir();
 

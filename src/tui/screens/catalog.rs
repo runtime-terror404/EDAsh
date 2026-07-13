@@ -56,8 +56,8 @@ pub struct DownloadItem {
 }
 
 impl CatalogScreen {
-    pub fn new(envs: Vec<String>) -> Self {
-        let pdks = Self::load_pdks();
+    pub fn new(envs: Vec<String>, source: &crate::catalog::CatalogSource) -> Self {
+        let pdks = Self::load_pdks(source);
         Self {
             envs,
             pdks,
@@ -80,23 +80,18 @@ impl CatalogScreen {
         }
     }
 
-    fn load_pdks() -> Vec<(String, String, String)> {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("catalog/index.yaml");
-        if let Ok(data) = std::fs::read_to_string(&path) {
-            if let Ok(idx) = serde_yaml::from_str::<serde_yaml::Value>(&data) {
-                if let Some(pdks) = idx.get("pdks").and_then(|p| p.as_mapping()) {
-                    return pdks
-                        .iter()
-                        .map(|(k, v)| {
-                            let name = k.as_str().unwrap_or("?").to_string();
-                            let variant = v.get("variant").and_then(|x| x.as_str()).unwrap_or("?").to_string();
-                            (name, variant, "✗ not installed".to_string())
-                        })
-                        .collect();
-                }
+    fn load_pdks(source: &crate::catalog::CatalogSource) -> Vec<(String, String, String)> {
+        let mut pdks = Vec::new();
+        for name in source.list_pdk_names() {
+            if let Some(config_yaml) = source.read_pdk_config(&name) {
+                let variant = serde_yaml::from_str::<serde_yaml::Value>(&config_yaml)
+                    .ok()
+                    .and_then(|v| v.get("variant")?.as_str().map(String::from))
+                    .unwrap_or_else(|| "?".to_string());
+                pdks.push((name, variant, "✗ not installed".to_string()));
             }
         }
-        Vec::new()
+        pdks
     }
 
     /// Number of selectable sidebar rows: envs + PDKs + Downloads

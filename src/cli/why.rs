@@ -1,11 +1,11 @@
 use crate::catalog::resolver::Resolver;
-use std::path::PathBuf;
+use crate::catalog::CatalogSource;
 
 pub fn why(
     tool: &str,
-    catalog_dir: &PathBuf,
+    source: &CatalogSource,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resolver = Resolver::load(catalog_dir)?;
+    let resolver = Resolver::load_from(source)?;
     let envs = resolver.which_envs(tool);
 
     if envs.is_empty() {

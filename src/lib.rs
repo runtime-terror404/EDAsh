@@ -2,8 +2,8 @@ pub mod actions;
 pub mod backend;
 pub mod catalog;
 pub mod cli;
-pub mod config;
 pub mod doctor;
+pub mod installation;
 pub mod lockfile;
 pub mod manifest;
 pub mod paths;
@@ -63,37 +63,63 @@ pub enum Command {
         #[arg(long)]
         names_only: bool,
     },
+    Update {},
+    Repair {},
+    /// Hidden installer subcommands (gated by EDASH_INSTALLER=1).
+    #[command(hide = true, name = "__internal")]
+    __Internal {
+        #[command(subcommand)]
+        action: InstallAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum InstallAction {
+    /// Print config_dir, data_dir, bin_dir as key=value.
+    Paths,
+    /// Stage a catalog from an extracted directory.
+    StageCatalog {
+        extracted_dir: PathBuf,
+        manifest: PathBuf,
+    },
+    /// Run self-test against live paths.
+    SelfTest,
 }
 
 pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let catalog_dir = cli.catalog_dir.unwrap_or_else(|| {
-        std::env::var("EDASH_CATALOG_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("catalog"))
-    });
+    let source = resolve_catalog_source(cli.catalog_dir);
 
     let lock_path = crate::paths::lockfile_path();
 
     match cli.command {
         Some(Command::Install { names }) => {
-            cli::install::install(&names, &catalog_dir).await
+            cli::install::install(&names, &source).await
         }
         Some(Command::List { .. }) => cli::list::list(&lock_path),
-        Some(Command::Remove { names }) => cli::remove::remove(&names, &catalog_dir),
-        Some(Command::Env { name }) => cli::env::env(&name, &catalog_dir),
-        Some(Command::Shell { name }) => cli::shell::shell(&name, &catalog_dir),
-        Some(Command::Doctor { name }) => cli::doctor::doctor(&name, &catalog_dir),
-        Some(Command::Search { query }) => cli::search::search(&query, &catalog_dir),
-        Some(Command::Why { tool }) => cli::why::why(&tool, &catalog_dir),
+        Some(Command::Remove { names }) => cli::remove::remove(&names, &source),
+        Some(Command::Env { name }) => cli::env::env(&name, &source),
+        Some(Command::Shell { name }) => cli::shell::shell(&name, &source),
+        Some(Command::Doctor { name }) => cli::doctor::doctor(&name, &source),
+        Some(Command::Search { query }) => cli::search::search(&query, &source),
+        Some(Command::Why { tool }) => cli::why::why(&tool, &source),
         Some(Command::Outdated { .. }) => cli::outdated::outdated(&lock_path),
         Some(Command::Clean { dry_run }) => cli::clean::clean(&lock_path, dry_run),
         Some(Command::Cache { .. }) => cli::clean::cache(),
         Some(Command::Export { name, format }) => {
-            cli::export::export(&name, &format, &catalog_dir)
+            cli::export::export(&name, &format, &source)
         }
         Some(Command::Pdk { name, names_only }) => {
-            cli::pdk::pdk(name.as_deref(), &catalog_dir, names_only)
+            cli::pdk::pdk(name.as_deref(), &source, names_only)
         }
+        Some(Command::Update { .. }) => cli::update::update(),
+        Some(Command::Repair { .. }) => cli::repair::repair(),
+        Some(Command::__Internal { action }) => match action {
+            InstallAction::Paths => cli::installer::paths(),
+            InstallAction::StageCatalog { extracted_dir, manifest } => {
+                cli::installer::stage_catalog(&extracted_dir, &manifest)
+            }
+            InstallAction::SelfTest => cli::installer::self_test(),
+        },
         None => {
             println!("edash — reproducible EDA toolchain manager");
             println!("Usage: edash <command>");
@@ -102,4 +128,15 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
     }
+}
+
+/// Resolve the catalog source from CLI flag, env var, or XDG default.
+pub fn resolve_catalog_source(explicit: Option<PathBuf>) -> crate::catalog::CatalogSource {
+    if let Some(path) = explicit {
+        return crate::catalog::CatalogSource::Path(path);
+    }
+    if let Ok(env_path) = std::env::var("EDASH_CATALOG_PATH") {
+        return crate::catalog::CatalogSource::Path(PathBuf::from(env_path));
+    }
+    crate::catalog::CatalogSource::Default
 }

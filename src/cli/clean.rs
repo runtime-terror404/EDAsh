@@ -70,14 +70,22 @@ pub fn cache() -> Result<(), Box<dyn std::error::Error>> {
         let size = meta.len();
         total += size;
         let name = entry.file_name();
-        println!(
-            "  {}  {} MB",
-            name.to_string_lossy(),
-            size / (1024 * 1024)
-        );
+        let display = if size >= 1024 * 1024 {
+            format!("{:.0} MB", size as f64 / (1024.0 * 1024.0))
+        } else if size >= 1024 {
+            format!("{:.0} KB", size as f64 / 1024.0)
+        } else {
+            format!("{} B", size)
+        };
+        println!("  {:<40} {}", name.to_string_lossy(), display);
     }
 
-    println!("  total: {} GB", total / (1024 * 1024 * 1024));
+    let total_display = if total >= 1024 * 1024 * 1024 {
+        format!("{:.1} GB", total as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else {
+        format!("{:.0} MB", total as f64 / (1024.0 * 1024.0))
+    };
+    println!("  total: {}", total_display);
     println!("\nUse 'edash clean' to remove unreferenced installs.");
     Ok(())
 }

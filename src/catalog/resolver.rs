@@ -1,23 +1,35 @@
 use crate::catalog::index::{
     BackendKind, CatalogIndex, EnvironmentDef, PackageRequest, PdkRequest, ResolvedItem, ToolRegistry,
 };
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 pub struct Resolver {
     index: CatalogIndex,
     tools: ToolRegistry,
     base_dir: String,
+    user_dir: Option<String>,
 }
 
 impl Resolver {
-    pub fn new(index: CatalogIndex, tools: ToolRegistry, base_dir: String) -> Self {
+    pub fn new(index: CatalogIndex, tools: ToolRegistry, base_dir: String, user_dir: Option<String>) -> Self {
         Self {
             index,
             tools,
             base_dir,
+            user_dir,
         }
     }
 
+    /// Load from a CatalogSource.
+    pub fn load_from(source: &crate::catalog::CatalogSource) -> Result<Self, Box<dyn std::error::Error>> {
+        match source {
+            crate::catalog::CatalogSource::Path(p) => Self::load(p),
+            crate::catalog::CatalogSource::Default => Self::load_default(),
+        }
+    }
+
+    /// Load from a single catalog directory (dev mode — `-c` flag or `EDASH_CATALOG_PATH`).
     pub fn load(base_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let index_path = base_dir.join("index.yaml");
         let tools_path = base_dir.join("tools.yaml");
@@ -25,7 +37,78 @@ impl Resolver {
         let index: CatalogIndex = serde_yaml::from_str(&std::fs::read_to_string(&index_path)?)?;
         let tools: ToolRegistry = serde_yaml::from_str(&std::fs::read_to_string(&tools_path)?)?;
 
-        Ok(Self::new(index, tools, base_dir.to_string_lossy().to_string()))
+        Ok(Self::new(index, tools, base_dir.to_string_lossy().to_string(), None))
+    }
+
+    /// Load from XDG data/config dirs, merging base + user catalogs.
+    /// User catalog entries override base entries for tools, environments, and PDKs.
+    pub fn load_default() -> Result<Self, Box<dyn std::error::Error>> {
+        let base_dir = crate::paths::catalog_base_dir();
+        let user_dir = crate::paths::catalog_user_dir();
+
+        // Load base catalog (must exist)
+        if !base_dir.join("index.yaml").exists() {
+            return Err(format!(
+                "Catalog not found at {}. Run 'edash update' or set EDASH_CATALOG_PATH.",
+                base_dir.display()
+            ).into());
+        }
+
+        let mut index: CatalogIndex = serde_yaml::from_str(
+            &std::fs::read_to_string(base_dir.join("index.yaml"))?
+        )?;
+        let mut tools: ToolRegistry = serde_yaml::from_str(
+            &std::fs::read_to_string(base_dir.join("tools.yaml"))?
+        )?;
+
+        // Overlay user catalog if it exists
+        let user_index_path = user_dir.join("index.yaml");
+        if user_index_path.exists() {
+            let user_index: CatalogIndex = serde_yaml::from_str(
+                &std::fs::read_to_string(&user_index_path)?
+            )?;
+            for (k, v) in user_index.environments {
+                index.environments.insert(k, v);
+            }
+            if let Some(user_pdks) = user_index.pdks {
+                let pdks = index.pdks.get_or_insert_with(HashMap::new);
+                for (k, v) in user_pdks {
+                    pdks.insert(k, v);
+                }
+            }
+        }
+
+        let user_tools_path = user_dir.join("tools.yaml");
+        if user_tools_path.exists() {
+            let user_tools: ToolRegistry = serde_yaml::from_str(
+                &std::fs::read_to_string(&user_tools_path)?
+            )?;
+            for (k, v) in user_tools {
+                tools.insert(k, v);
+            }
+        }
+
+        Ok(Self::new(
+            index,
+            tools,
+            base_dir.to_string_lossy().to_string(),
+            Some(user_dir.to_string_lossy().to_string()),
+        ))
+    }
+
+    /// Find a file by checking user dir first, then base dir.
+    fn find_file(&self, relative_path: &str) -> Option<PathBuf> {
+        if let Some(ref ud) = self.user_dir {
+            let p = PathBuf::from(ud).join(relative_path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        let p = PathBuf::from(&self.base_dir).join(relative_path);
+        if p.exists() {
+            return Some(p);
+        }
+        None
     }
 
     pub fn resolve(&self, name: &str) -> Result<Vec<ResolvedItem>, Box<dyn std::error::Error>> {
@@ -58,7 +141,11 @@ impl Resolver {
         &self,
         env_path: &Path,
     ) -> Result<Vec<PackageRequest>, Box<dyn std::error::Error>> {
-        let content = std::fs::read_to_string(env_path)?;
+        // Try user dir first, then base dir
+        let path_str = env_path.to_string_lossy();
+        let full_path = self.find_file(&path_str)
+            .ok_or_else(|| format!("Environment file '{}' not found in catalog", path_str))?;
+        let content = std::fs::read_to_string(&full_path)?;
         let env: EnvironmentDef = serde_yaml::from_str(&content)?;
 
         let mut requests = Vec::new();
@@ -89,11 +176,12 @@ impl Resolver {
     pub fn which_envs(&self, tool: &str) -> Vec<String> {
         let mut envs = Vec::new();
         for (env_name, env_path) in &self.index.environments {
-            let full_path = Path::new(&self.base_dir).join(env_path);
-            if let Ok(content) = std::fs::read_to_string(&full_path) {
-                if let Ok(env) = serde_yaml::from_str::<EnvironmentDef>(&content) {
-                    if env.tools.iter().any(|t| t == tool) {
-                        envs.push(env_name.clone());
+            if let Some(full_path) = self.find_file(env_path) {
+                if let Ok(content) = std::fs::read_to_string(&full_path) {
+                    if let Ok(env) = serde_yaml::from_str::<EnvironmentDef>(&content) {
+                        if env.tools.iter().any(|t| t == tool) {
+                            envs.push(env_name.clone());
+                        }
                     }
                 }
             }

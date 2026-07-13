@@ -5,16 +5,10 @@ fn main() {
 
     // Bare invocation + TTY → dashboard
     if cli.command.is_none() && is_terminal::is_terminal(&std::io::stdout()) {
-        let catalog_dir = cli.catalog_dir.unwrap_or_else(|| {
-            std::env::var("EDASH_CATALOG_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("catalog")
-                })
-        });
-        match edash::tui::run(catalog_dir) {
+        let source = edash::resolve_catalog_source(cli.catalog_dir);
+        match edash::tui::run(source.clone()) {
             Ok(Some(shell_env)) => {
-                let _ = edash::cli::shell::shell(&shell_env, &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("catalog"));
+                let _ = edash::cli::shell::shell(&shell_env, &source);
             }
             Err(e) => {
                 eprintln!("error: {}", e);
