@@ -23,7 +23,7 @@ impl OssCadSuiteBackend {
         self.install_dir.join("environment").exists()
     }
 
-    fn latest_release_info() -> Result<(String, u64), Box<dyn std::error::Error>> {
+    fn latest_release_info() -> Result<(String, String), Box<dyn std::error::Error>> {
         let output = Command::new("curl")
             .args(["-s", API_URL])
             .output()
@@ -36,24 +36,18 @@ impl OssCadSuiteBackend {
             .as_str()
             .ok_or("no tag_name in release api")?;
 
+        let created_at = json["created_at"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+
         let date_stripped = tag.replace('-', "");
         let filename = format!("oss-cad-suite-linux-x64-{date_stripped}.tgz");
         let url = format!(
             "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/{tag}/{filename}"
         );
 
-        // Extract exact byte size from the assets array
-        let expected_size = json["assets"]
-            .as_array()
-            .and_then(|assets| {
-                assets.iter().find(|a| {
-                    a["name"].as_str().map_or(false, |n| n == filename.as_str())
-                })
-            })
-            .and_then(|asset| asset["size"].as_u64())
-            .unwrap_or(0);
-
-        Ok((url, expected_size))
+        Ok((url, created_at))
     }
 
     pub fn install_package(
@@ -78,35 +72,34 @@ impl OssCadSuiteBackend {
         &self,
         progress: &ProgressTx,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (url, expected_size) = Self::latest_release_info()?;
+        let (url, created_at) = Self::latest_release_info()?;
         let cache_dir = paths::cache_dir();
         std::fs::create_dir_all(&cache_dir)?;
 
         let filename = url.rsplit('/').next().unwrap_or("oss-cad-suite.tgz");
         let cache_path = cache_dir.join(filename);
+        let timestamp_path = cache_dir.join("oss-cad-suite.timestamp");
 
-        // Skip download if cached file matches expected size
-        let need_download = !cache_path.exists()
-            || (expected_size > 0 && std::fs::metadata(&cache_path).map(|m| m.len()).unwrap_or(0) != expected_size);
+        // Check if we already have the same release cached
+        let cached_ts = std::fs::read_to_string(&timestamp_path).unwrap_or_default();
+        let need_download = !cache_path.exists() || cached_ts.trim() != created_at;
 
         if need_download {
-            // Remove old cached tarballs before downloading new one
-            if expected_size > 0 {
-                if let Ok(entries) = std::fs::read_dir(&cache_dir) {
-                    for entry in entries.flatten() {
-                        let p = entry.path();
-                        if p.is_file() && p != cache_path {
-                            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                                if name.starts_with("oss-cad-suite-linux-x64-") && name.ends_with(".tgz") {
-                                    let _ = std::fs::remove_file(&p);
-                                }
+            // Clean old tarballs before downloading new one
+            if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_file() {
+                        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                            if name.starts_with("oss-cad-suite-linux-x64-") && name.ends_with(".tgz") {
+                                let _ = std::fs::remove_file(&p);
                             }
                         }
                     }
                 }
             }
 
-            let _ = progress.send(Progress::Stage("downloading oss-cad-suite (~1.5GB)".into()));
+            let _ = progress.send(Progress::Stage("downloading oss-cad-suite (~700 MB)".into()));
 
             let output = Command::new("curl")
                 .args([
@@ -124,6 +117,9 @@ impl OssCadSuiteBackend {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 return Err(format!("oss-cad-suite download failed: {}", stderr).into());
             }
+
+            // Write timestamp after successful download
+            let _ = std::fs::write(&timestamp_path, &created_at);
         }
 
         let _ = progress.send(Progress::Stage("extracting oss-cad-suite".into()));
