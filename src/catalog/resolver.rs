@@ -141,10 +141,22 @@ impl Resolver {
         &self,
         env_path: &Path,
     ) -> Result<Vec<PackageRequest>, Box<dyn std::error::Error>> {
-        // Try user dir first, then base dir
-        let path_str = env_path.to_string_lossy();
-        let full_path = self.find_file(&path_str)
-            .ok_or_else(|| format!("Environment file '{}' not found in catalog", path_str))?;
+        // env_path is already absolute (base_dir joined with relative path).
+        // If user_dir is set, check for a user override at the same relative path.
+        let full_path = if let Some(ref ud) = self.user_dir {
+            if let Ok(rel) = env_path.strip_prefix(&self.base_dir) {
+                let user_path = PathBuf::from(ud).join(rel);
+                if user_path.exists() {
+                    user_path
+                } else {
+                    env_path.to_path_buf()
+                }
+            } else {
+                env_path.to_path_buf()
+            }
+        } else {
+            env_path.to_path_buf()
+        };
         let content = std::fs::read_to_string(&full_path)?;
         let env: EnvironmentDef = serde_yaml::from_str(&content)?;
 
