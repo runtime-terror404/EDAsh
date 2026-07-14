@@ -1,16 +1,21 @@
-<h1 align="center">EDAsh</h1>
+<h1 hidden>EDAsh</h1>
+<h2 hidden>Open-source EDA toolchain manager for ASIC, FPGA, and analog design.</h2>
 
-[![CI](https://github.com/runtime-terror404/EDAsh/actions/workflows/release.yml/badge.svg)](https://github.com/runtime-terror404/EDAsh/actions/workflows/release.yml)
-[![Release](https://img.shields.io/github/v/release/runtime-terror404/EDAsh)](https://github.com/runtime-terror404/EDAsh/releases)
-[![License](https://img.shields.io/github/license/runtime-terror404/EDAsh)](LICENSE)
-
-```
-────┐        ┌──────┐   ┌─┐     ┌────────┐      ┌───────┐
-    └────────┘      └───┘ └─────┘        └──────┘       └────────────────────────────────────────────────────────────
+<div align="center">
+<pre style="background: transparent; border: none; padding: 0; margin: 0; font-family: monospace; line-height: 1.3; color: #f0f6fc; font-size: 18px; text-align: left; display: inline-block;">
+<span style="color: #f0f6fc;">────┐        ┌──────┐   ┌─┐     ┌────────┐      ┌───────┐
+    └────────┘      └───┘ └─────┘        └──────┘       └──────────────────────────────────</span>
  ░█▀▀░█▀▄░█▀█░█▀▀░█░█
- ░█▀▀░█░█░█▀█░▀▀█░█▀█           Open-source EDA toolchain manager for ASIC, FPGA, and analog design.
+ ░█▀▀░█░█░█▀█░▀▀█░█▀█  Open-source EDA toolchain manager for ASIC, FPGA, and analog design.
  ░▀▀▀░▀▀░░▀░▀░▀▀▀░▀░▀
-```
+</pre>
+</div>
+
+<p align="center">
+  <a href="https://github.com/runtime-terror404/EDAsh/actions/workflows/release.yml"><img src="https://github.com/runtime-terror404/EDAsh/actions/workflows/release.yml/badge.svg" alt="CI" style="margin: 0 10px;"></a>
+  <a href="https://github.com/runtime-terror404/EDAsh/releases"><img src="https://img.shields.io/github/v/release/runtime-terror404/EDAsh" alt="Release" style="margin: 0 10px;"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/runtime-terror404/EDAsh" alt="License" style="margin: 0 10px;"></a>
+</p>
 
 ## Quickstart
 
