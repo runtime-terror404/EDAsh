@@ -1,6 +1,16 @@
-# edash
+<h1 align="center">EDAsh</h1>
 
-Reproducible EDA toolchain manager — rustup/pyenv semantics, for VLSI, FPGA, and analog design tools.
+[![CI](https://github.com/runtime-terror404/EDAsh/actions/workflows/release.yml/badge.svg)](https://github.com/runtime-terror404/EDAsh/actions/workflows/release.yml)
+[![Release](https://img.shields.io/github/v/release/runtime-terror404/EDAsh)](https://github.com/runtime-terror404/EDAsh/releases)
+[![License](https://img.shields.io/github/license/runtime-terror404/EDAsh)](LICENSE)
+
+```
+────┐        ┌──────┐   ┌─┐     ┌────────┐      ┌───────┐
+    └────────┘      └───┘ └─────┘        └──────┘       └────────────────────────────────────────────────────────────
+ ░█▀▀░█▀▄░█▀█░█▀▀░█░█
+ ░█▀▀░█░█░█▀█░▀▀█░█▀█           Open-source EDA toolchain manager for ASIC, FPGA, and analog design.
+ ░▀▀▀░▀▀░░▀░▀░▀▀▀░▀░▀
+```
 
 ## Quickstart
 
@@ -61,11 +71,11 @@ The `-c ./catalog` flag points to the catalog in the source tree. Release binari
 
 edash itself is a single static binary. At runtime it needs:
 
-| Dependency | Required for | Auto-installed? |
-|-----------|-------------|----------------|
-| `micromamba` | Conda-based tools (openroad, magic, xschem, etc.) | Offered on first use |
-| `ciel` | PDK installation | No — `pip install ciel` |
-| `curl`, `tar` | OSS CAD Suite, self-updates | Expected on all Linux systems |
+| Dependency    | Required for                                      | Auto-installed?               |
+| ------------- | ------------------------------------------------- | ----------------------------- |
+| `micromamba`  | Conda-based tools (openroad, magic, xschem, etc.) | Offered on first use          |
+| `ciel`        | PDK installation                                  | No — `pip install ciel`       |
+| `curl`, `tar` | OSS CAD Suite, self-updates                       | Expected on all Linux systems |
 
 ## Usage
 
@@ -102,7 +112,7 @@ Options:
 ### Environments
 
 ```bash
-edash install digital    # ASIC backend + synthesis + FPGA + formal (18 tools)
+edash install digital    # ASIC backend + synthesis + FPGA + formal (15 tools)
 edash install analog     # Analog design: xschem, ngspice, xyce, magic, klayout, netgen, gaw
 ```
 
@@ -133,36 +143,36 @@ edash shell digital           # spawn a subshell with MOTD
 
 ### Digital environment
 
-| Category | Tools | Backend |
-|----------|-------|---------|
-| Synthesis | yosys | OSS CAD Suite |
-| Place & route | openroad | micromamba (litex-hub) |
-| Layout | magic, klayout | micromamba |
-| LVS | netgen | micromamba |
-| Simulation | iverilog, verilator, gtkwave | OSS CAD Suite |
-| FPGA | nextpnr, icestorm, prjtrellis, openfpgaloader | OSS CAD Suite |
-| Formal | sby, boolector, z3 | OSS CAD Suite |
+| Category      | Tools                                         | Backend                |
+| ------------- | --------------------------------------------- | ---------------------- |
+| Synthesis     | yosys                                         | OSS CAD Suite          |
+| Place & route | openroad                                      | micromamba (litex-hub) |
+| Layout        | magic, klayout                                | micromamba             |
+| LVS           | netgen                                        | micromamba             |
+| Simulation    | iverilog, verilator, gtkwave                  | OSS CAD Suite          |
+| FPGA          | nextpnr, icestorm, prjtrellis, openfpgaloader | OSS CAD Suite          |
+| Formal        | sby, boolector, z3                            | OSS CAD Suite          |
 
 ### Analog environment
 
-| Category | Tools | Backend |
-|----------|-------|---------|
-| Schematic | xschem | micromamba (litex-hub) |
-| Simulation | ngspice, xyce | micromamba |
-| Layout | magic, klayout | micromamba |
-| LVS | netgen | micromamba |
-| Waveform | gaw | micromamba (edash) |
+| Category   | Tools          | Backend                |
+| ---------- | -------------- | ---------------------- |
+| Schematic  | xschem         | micromamba (litex-hub) |
+| Simulation | ngspice, xyce  | micromamba             |
+| Layout     | magic, klayout | micromamba             |
+| LVS        | netgen         | micromamba             |
+| Waveform   | gaw            | micromamba (edash)     |
 
 ## Comparison
 
 edash doesn't replace these tools — it wraps them and adds a reproducibility layer:
 
-| vs | What edash adds |
-|----|----------------|
-| Raw `micromamba install` | Lockfile for reproducibility. One command installs entire environments. `doctor` runs functional checks, not just file-exists. |
-| OSS CAD Suite tarball | Same lockfile + catalog layer. edash adds the ASIC and analog side under one CLI. |
-| Nix / nix-eda | Different tradeoff. Nix's ceiling is higher (perfect reproducibility); edash's floor is lower (no Nix install required).
-| Docker-based flows (IIC-OSIC-TOOLS) | No container overhead. Native GUI tools work without X11 forwarding. |
+| vs                                  | What edash adds                                                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Raw `micromamba install`            | Lockfile for reproducibility. One command installs entire environments. `doctor` runs functional checks, not just file-exists. |
+| OSS CAD Suite tarball               | Same lockfile + catalog layer. edash adds the ASIC and analog side under one CLI.                                              |
+| Nix / nix-eda                       | Different tradeoff. Nix's ceiling is higher (perfect reproducibility); edash's floor is lower (no Nix install required).       |
+| Docker-based flows (IIC-OSIC-TOOLS) | No container overhead. Native GUI tools work without X11 forwarding.                                                           |
 
 ## Configuration
 
@@ -185,7 +195,7 @@ edash wraps three upstream projects that do the heavy lifting:
 
 - [litex-hub](https://github.com/litex-hub/conda-packages) and [conda-forge](https://conda-forge.org/) — conda packaging for open-source EDA tools
 - [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) — monolithic distribution of synthesis, simulation, FPGA, and formal tools
-- [ciel](https://github.com/efabless/ciel) (formerly Volare) — PDK version manager from Efabless/ChipFlow
+- [ciel](https://github.com/fossi-foundation/ciel) (based on Volare by Efabless) — PDK version manager
 
 TUI design inspired by [torlink](https://github.com/baairon/torlink). Toolchain-manager model inspired by [rustup](https://rustup.rs) and [mise](https://mise.jdx.dev).
 

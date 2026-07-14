@@ -304,7 +304,7 @@ The TUI receives a `CatalogSource` and passes it through to the resolver and spa
 | TUI | `ratatui` 0.29 + `crossterm` 0.28 | Terminal UI with cross-terminal support |
 | Async | `tokio` 1 | Subprocess management, channel-based progress |
 | Serialization | `serde_yaml` (catalog), `toml` (lockfile) | Human-readable, hand-editable formats |
-| HTTP | `reqwest` 0.12 (API), `curl` subprocess (downloads) | reqwest for API calls, curl for large file transfers |
+| HTTP | `curl` subprocess (API, downloads) | oss-cad-suite, edash update |
 | Path resolution | `dirs` 6 | XDG base directories |
 | Hashing | `sha2` + `hex` | Content verification |
 
