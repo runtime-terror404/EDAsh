@@ -1,7 +1,7 @@
-<h1 hidden>EDAsh</h1>
-<h2 hidden>Open-source EDA toolchain manager for ASIC, FPGA, and analog design.</h2>
+<!--edash-->
+<!-- Open-source EDA toolchain manager for ASIC, FPGA, and analog design. -->
 
-<div align="center">
+<div>
 <pre style="background: transparent; border: none; padding: 0; margin: 0; font-family: monospace; line-height: 1.3; color: #f0f6fc; font-size: 18px; text-align: left; display: inline-block;">
 <span style="color: #f0f6fc;">────┐        ┌──────┐   ┌─┐     ┌────────┐      ┌───────┐
     └────────┘      └───┘ └─────┘        └──────┘       └──────────────────────────────────</span>
