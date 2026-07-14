@@ -14,12 +14,8 @@
 .claude/
 
 # Build-time instructions, not shipped
-readme_creation.md
 CLAUDE.md
 PLAN.md
-tui_suggestion.md
-pdk_invokation.md
-edash-install-update-plan-v3.md
 
 # Shell dotfiles (sandbox artifacts)
 .bash_profile
@@ -45,5 +41,3 @@ edash.lock
 
 # Scrapped files (kept for reference, not in the project)
 scrap/
-edash_tui_fix_src/
-progress_bar_fix/

@@ -1,377 +1,325 @@
 # edash — architecture
 
-_rustup/pyenv semantics, applied to EDA toolchains and PDKs._
+_Reproducible EDA toolchain manager — rustup/pyenv semantics for VLSI, FPGA, and analog design tools._
 
 ## Design principles
 
-- Never touch system package manager for tool versions (apt/dnf/pacman drift across distros and time).
-- Lock file is the unit of reproducibility — same lock, same bits, any machine.
-- Backend is an implementation detail behind a trait, not a fork in the codebase.
-- No telemetry, no phone-home.
-- Wrap proven upstream distributors (litex-hub, oss-cad-suite, ciel) instead of rebuilding packaging pipelines — fall back to a source build only when no package exists (Xyce/Trilinos).
+- **Never touch the system package manager.** Tool versions come from conda channels (via micromamba), monolithic tarballs (oss-cad-suite), or PDK managers (ciel). No `apt`/`dnf`/`pacman`.
+- **Lockfile is the unit of reproducibility.** Same lock, same bits, any machine. `edash.lock` records exact versions and backends.
+- **Backend is an implementation detail behind a trait.** Micromamba, oss-cad-suite, and future backends share the same interface. No tool-specific branching outside `src/backend/`.
+- **Catalog is data, not code.** Tools, environments, and PDKs are defined in YAML files — adding a tool or PDK requires zero Rust changes.
+- **No telemetry, no phone-home** (except GitHub API for oss-cad-suite release checks and `edash update`).
 
-## Non-goals (v1)
-
-- Windows native support (WSL fine via existing backends)
-- GUI desktop app
-- Proprietary tool integration (Cadence/Synopsys — licensing wall, out of scope)
-- Full Nix/distrobox backend parity at launch — micromamba ships first
-
-## Repo layout
+## Repository layout
 
 ```
 edash/
 ├── src/
-│   ├── main.rs
-│   ├── cli/
-│   │   ├── install.rs
-│   │   ├── list.rs
-│   │   ├── search.rs
-│   │   ├── verify.rs
-│   │   ├── doctor.rs
-│   │   ├── update.rs
-│   │   ├── outdated.rs        # new
-│   │   ├── why.rs              # new
-│   │   ├── remove.rs
-│   │   ├── clean.rs            # new
-│   │   ├── cache.rs            # new
-│   │   ├── env.rs              # new — eval-able activation
-│   │   ├── shell.rs
-│   │   ├── export.rs
-│   │   └── init.rs             # new — project scaffold
+│   ├── main.rs                    # Binary entry: TUI or CLI dispatch
+│   ├── lib.rs                     # Clap CLI parser, subcommand dispatch, module root
+│   ├── paths.rs                   # XDG path resolution (data, config, cache, catalog dirs)
+│   ├── actions.rs                 # Shared install/remove orchestrator (CLI + TUI both call this)
+│   ├── installation.rs            # InstallationMetadata — read/write installation.yaml
 │   ├── catalog/
-│   │   ├── index.rs             # kind-tagged registry: env | tool | pdk
-│   │   ├── resolver.rs          # name -> package list, polymorphic
-│   │   └── source.rs            # remote catalog fetch + cache
-│   ├── manifest/
-│   │   └── schema.rs             # edash.yaml (declared ranges)
-│   ├── lockfile/
-│   │   ├── schema.rs              # edash.lock (resolved + sha256)
-│   │   ├── writer.rs
-│   │   └── verifier.rs
+│   │   ├── mod.rs                 # CatalogSource enum (Path vs Default/base+user merge)
+│   │   ├── index.rs               # Data types: CatalogIndex, ToolRegistry, BackendKind, etc.
+│   │   ├── resolver.rs            # Name → PackageRequest resolution, search, listing
+│   │   └── source.rs              # Dev-mode catalog path helper (CARGO_MANIFEST_DIR)
 │   ├── backend/
-│   │   ├── mod.rs                 # Backend trait
-│   │   ├── micromamba.rs          # default, v1
-│   │   ├── oss_cad_suite.rs       # v1, fpga/formal
-│   │   ├── nix.rs                 # phase 3
-│   │   ├── distrobox.rs           # phase 3
-│   │   └── source.rs              # phase 3
+│   │   ├── mod.rs                 # Backend trait + Progress/ResolvedPackage types
+│   │   ├── micromamba.rs          # Conda-based backend (litex-hub, conda-forge, vlsida-eda)
+│   │   └── oss_cad_suite.rs       # Monolithic tarball backend (synthesis, FPGA, formal)
+│   ├── lockfile/
+│   │   ├── mod.rs                 # Module root
+│   │   ├── schema.rs              # Lockfile, LockedPackage, LockedPdk (TOML)
+│   │   └── writer.rs              # Serialize/deserialize edash.lock
+│   ├── manifest/
+│   │   ├── mod.rs                 # Module root
+│   │   └── schema.rs              # edash.yaml project manifest (WIP, not wired in)
 │   ├── pdk/
-│   │   └── ciel.rs                 # wraps ciel (fka Volare)
+│   │   ├── mod.rs                 # PdkRequest type
+│   │   ├── ciel.rs                # PDK install via ciel (ls-remote → fetch → enable)
+│   │   └── config.rs              # Per-PDK YAML configs, env var resolution
 │   ├── doctor/
-│   │   ├── checks.rs                # functional micro-benchmarks
-│   │   └── report.rs
-│   ├── config.rs                     # resolution: cli > project > user > default
-│   └── paths.rs                      # XDG dirs
-├── catalog/                            # community-editable registry, versioned separately from core
-│   ├── index.yaml                      # environments + pdks
-│   ├── tools.yaml                      # flat tool registry, single source of truth
-│   ├── digital.yaml
-│   ├── analog.yaml
-│   ├── fpga.yaml
-│   └── formal.yaml
-├── tests/
-│   ├── mock_backend.rs                 # fake backend, no GB downloads in CI
-│   └── resolver.rs
+│   │   ├── mod.rs                 # Module root
+│   │   └── checks.rs              # Functional micro-benchmarks per tool
+│   ├── cli/
+│   │   ├── mod.rs                 # Module declarations
+│   │   ├── install.rs             # edash install <name...>
+│   │   ├── list.rs                # edash list
+│   │   ├── remove.rs              # edash remove <name...>
+│   │   ├── env.rs                 # edash env <name> (eval-able exports)
+│   │   ├── shell.rs               # edash shell <name> (subshell with MOTD)
+│   │   ├── doctor.rs              # edash doctor <name>
+│   │   ├── search.rs              # edash search <query>
+│   │   ├── why.rs                 # edash why <tool>
+│   │   ├── outdated.rs            # edash outdated
+│   │   ├── clean.rs               # edash clean + edash cache
+│   │   ├── export.rs              # edash export --format dockerfile|github-actions
+│   │   ├── pdk.rs                 # edash pdk [name]
+│   │   ├── update.rs              # edash update (self-update from GitHub releases)
+│   │   ├── repair.rs              # edash repair (recover interrupted updates)
+│   │   └── installer.rs           # __internal subcommands (gated, hidden from help)
+│   └── tui/
+│       ├── mod.rs                 # App, event loop, rendering, action dispatch
+│       ├── widgets.rs             # Color constants, status spans, spinners
+│       ├── screens/
+│       │   ├── mod.rs             # Module root
+│       │   └── catalog.rs         # CatalogScreen: sidebar, tool table, PDK table, downloads, doctor
+│       └── overlays/
+│           ├── mod.rs             # Module root
+│           ├── help.rs            # Help overlay (? key)
+│           └── confirm.rs         # Confirm overlay (destructive actions)
+├── catalog/                       # Community-editable registry
+│   ├── index.yaml                 # Environment list + PDK entries
+│   ├── tools.yaml                 # Flat tool registry (single source of truth)
+│   ├── digital.yaml               # ASIC backend + synthesis + FPGA + formal tools
+│   ├── analog.yaml                # Analog design tools
+│   └── pdks/
+│       ├── sky130.yaml            # SKY130 PDK paths
+│       ├── gf180.yaml             # GF180MCU PDK paths
+│       └── ihp-sg13g2.yaml        # IHP SG13G2 PDK paths
+├── tests/                         # Integration tests (95 tests, 11 files)
+├── docs/
+│   └── architecture.md            # This file
+├── .github/workflows/
+│   └── release.yml                # Tag-triggered release build (x86_64 + aarch64)
+├── install.sh                     # Bootstrap: curl | sh first-install
 ├── Cargo.toml
-├── README.md
-├── CLAUDE.md                            # persistent rules, short — see CLAUDE.md
-└── PLAN.md                              # build sequence + TUI spec, see PLAN.md
+├── CLAUDE.md                      # Session context and rules
+└── PLAN.md                        # Build sequence + TUI spec
 ```
 
-## CLI surface
+## Core concepts
 
-| Command                 | Behavior                                                                  |
-| ----------------------- | ------------------------------------------------------------------------- |
-| `install <name...>`     | resolves each arg (env/tool/pdk) via catalog, installs, updates lock      |
-| `list`                  | installed packages + versions                                             |
-| `search <query>`        | fuzzy match across catalog (env/tool/pdk)                                 |
-| `verify`                | fast — hash-check installed vs lock, no execution                         |
-| `doctor`                | slow — functional micro-benchmark per tool                                |
-| `update`                | re-resolve manifest ranges, rewrite lock                                  |
-| `outdated`              | diff lock vs latest catalog, no changes made                              |
-| `why <tool>`            | show which env/manifest entry pulled a tool in                            |
-| `remove <name>`         | uninstall, prune from lock                                                |
-| `clean`                 | prune unreferenced cache entries                                          |
-| `cache`                 | inspect/clear download cache                                              |
-| `env <name>`            | print activation script (`eval`-able)                                     |
-| `shell <name>`          | spawn subshell with env activated                                         |
-| `export --format <fmt>` | `github-actions`, `dockerfile`, `offline-bundle`                          |
-| `init [profile]`        | scaffold project: `edash.yaml`, Makefile, `.gitignore`, starter testbench |
+### Catalog
 
-## Catalog — unified, kind-tagged resolution
+The catalog is a set of YAML files that define _what_ can be installed. It lives in two places depending on context:
 
-One resolution path for environments, individual tools, and PDKs — `install digital`, `install xschem ngspice`, `install sky130` all hit the same resolver.
+- **Dev mode** (`-c ./catalog` or `EDASH_CATALOG_PATH`): a single directory, typically the source tree.
+- **Release mode** (default): `~/.local/share/edash/catalog/base/` (official, shipped with the binary) merged with `~/.config/edash/catalog/user/` (user overrides). User keys in `tools.yaml` and `index.yaml` override base; user environment files replace base ones.
 
-```mermaid
-flowchart LR
-    CLI[install / search / list] --> R[Catalog Resolver]
-    R -->|env| EXP[expand to tool list]
-    R -->|tool| DIR[direct package ref]
-    R -->|pdk| CIEL[ciel]
-    EXP --> BE[Backend: micromamba / oss-cad-suite]
-    DIR --> BE
-    BE --> LOCK[Lockfile: version + sha256]
-    LOCK --> ENVDIR[~/.edash/envs]
+Three YAML file types make up the catalog:
+
+| File | Purpose |
+|------|---------|
+| `index.yaml` | Maps environment names → env YAML files. Lists available PDKs with manager and variant. |
+| `tools.yaml` | Flat registry: every installable tool, its backend, and optional channel/package. Single source of truth. |
+| `<env>.yaml` | Named list of tool names (e.g. `digital.yaml` lists 14 tools). No duplication — tool metadata lives in `tools.yaml`. |
+| `pdks/<name>.yaml` | Per-PDK config: variant name and relative paths for spice, magic, netgen, xschem, klayout. |
+
+### CatalogSource
+
+`CatalogSource` is an enum that abstracts over where the catalog comes from:
+
+- **`CatalogSource::Path(PathBuf)`** — explicit directory (dev mode). All files read from that single directory.
+- **`CatalogSource::Default`** — XDG merged catalog. Reads from `catalog_base_dir()` first, then overlays `catalog_user_dir()` on top. User entries win.
+
+Every CLI command and the TUI receive a `CatalogSource` and pass it through to the resolver and PDK config loader.
+
+### Resolver
+
+`Resolver` loads the catalog and resolves names into concrete package requests:
+
+- **Environment name** (`digital`, `analog`): expands to the list of tools defined in the env YAML file, each looked up in `tools.yaml`.
+- **Tool name** (`yosys`, `magic`): resolves directly from `tools.yaml` into a `PackageRequest` with backend, channel, and package fields.
+- **PDK name** (`sky130`, `gf180`): resolves into a `PdkRequest` with manager and variant.
+
+Resolution is polymorphic — `install digital` and `install yosys` hit the same resolver. The resolver also powers `search`, `why`, and environment listing.
+
+When loading from `CatalogSource::Default`, the resolver merges base and user catalogs at construction time — user `tools.yaml` keys override base keys, user env files replace base ones. Environment file resolution at runtime checks the user dir first, then falls back to base.
+
+### Backends
+
+Backends implement the `Backend` trait and handle the actual install/verify/remove mechanics:
+
 ```
-
-```yaml
-# catalog/index.yaml — environments + pdks only; tool defs live in tools.yaml
-environments:
-  digital: catalog/digital.yaml
-  analog: catalog/analog.yaml
-  fpga: catalog/fpga.yaml
-  formal: catalog/formal.yaml
-
-pdks:
-  sky130: { manager: ciel, variant: sky130A }
-  gf180: { manager: ciel, variant: gf180mcuD }
-  ihp-sg13g2: { manager: open_pdks, build: source } # no ciel prebuilt yet — verify before relying on it
-```
-
-```yaml
-# catalog/tools.yaml — flat registry, single source of truth, one entry per tool
-xschem: { backend: micromamba, channel: litex-hub, package: xschem }
-ngspice: { backend: micromamba, channel: conda-forge, package: ngspice }
-xyce:
-  {
-    backend: source,
-    repo: "https://xyce.sandia.gov/downloads/source-code/",
-    requires: [cmake, trilinos],
-    mpi: optional,
-  }
-magic: { backend: micromamba, channel: litex-hub, package: magic }
-klayout: { backend: micromamba, channel: litex-hub, package: klayout }
-netgen: { backend: micromamba, channel: litex-hub, package: netgen }
-gaw: { backend: micromamba, channel: litex-hub, package: gaw }
-yosys: { backend: micromamba, channel: litex-hub, package: yosys }
-openroad: { backend: micromamba, channel: litex-hub, package: openroad }
-opensta: { backend: micromamba, channel: litex-hub, package: opensta }
-verilator: { backend: micromamba, channel: conda-forge, package: verilator }
-gtkwave: { backend: micromamba, channel: conda-forge, package: gtkwave }
-iverilog: { backend: micromamba, channel: conda-forge, package: iverilog }
-nextpnr: { backend: oss-cad-suite }
-icestorm: { backend: oss-cad-suite }
-prjtrellis: { backend: oss-cad-suite }
-openfpgaloader: { backend: oss-cad-suite }
-sby: { backend: oss-cad-suite }
-boolector: { backend: oss-cad-suite }
-z3: { backend: oss-cad-suite }
-```
-
-```yaml
-# catalog/digital.yaml
-name: digital
-tools:
-  [
-    yosys,
-    openroad,
-    klayout,
-    magic,
-    netgen,
-    opensta,
-    verilator,
-    gtkwave,
-    iverilog,
-  ]
-```
-
-```yaml
-# catalog/analog.yaml — both spice engines kept; xschem targets ngspice by
-# default, override per-project via edash.yaml if xyce preferred.
-# xyce resolves via the source backend (phase 3); rest of this list is v1.
-name: analog
-tools: [xschem, ngspice, xyce, magic, klayout, netgen, gaw]
-```
-
-```yaml
-# catalog/fpga.yaml + formal.yaml — every tool here resolves via oss-cad-suite, not conda
-name: fpga
-tools: [yosys, nextpnr, icestorm, prjtrellis, openfpgaloader, gtkwave]
----
-name: formal
-tools: [yosys, sby, boolector, z3]
-```
-
-litex-hub carries the ASIC backend/signoff stack; oss-cad-suite carries synthesis/FPGA/formal; anything without a package (Xyce) falls to the source backend. Resolver looks each name up in `tools.yaml` once, regardless of how many environments reference it — no duplicate definitions to drift out of sync.
-
-Channel/package names above are illustrative — confirm exact strings with `micromamba search -c litex-hub <tool>` before locking.
-
-## Manifest vs lock
-
-Two files, two jobs — collapsing them into one flat version list (as in the original draft) loses the declared-vs-resolved distinction Cargo/npm/poetry all rely on.
-
-```yaml
-# edash.yaml — project manifest, declared, committed, human-edited
-environments: [digital, formal]
-pdk:
-  sky130: { variant: sky130A }
-overrides:
-  yosys: ">=0.56"
-```
-
-```toml
-# edash.lock — resolved, committed, machine-generated only
-version = 1
-generated = "2026-07-07T00:00:00Z"
-
-[[package]]
-name = "yosys"
-version = "0.56"
-channel = "litex-hub"
-backend = "micromamba"
-sha256 = "b3f2c1a9e91a4d7f6b0c8e3a1f5d9c2b7e4a6f8d0c1b3a5e7f9d1c3b5a7e9f1d"
-
-[[package]]
-name = "openroad"
-version = "2.0-18439"
-channel = "litex-hub"
-backend = "micromamba"
-sha256 = "1a9c44de5b3f2c8e1a4d7f6b0c8e3a1f5d9c2b7e4a6f8d0c1b3a5e7f9d1c3b5"
-
-[pdk.sky130]
-variant = "sky130A"
-manager = "ciel"
-ref = "a1b2c3d4"
-sha256 = "9f0e2b71c1a9e91a4d7f6b0c8e3a1f5d9c2b7e4a6f8d0c1b3a5e7f9d1c3b5a7"
-```
-
-`install`/`update` write the lock. Every other command reads it. `sha256` is checked on every `verify`, not just first fetch — catches a channel serving a mutated artifact under an unchanged version string.
-
-## Backend abstraction
-
-```rust
 pub trait Backend {
     fn name(&self) -> &'static str;
     fn resolve(&self, req: &PackageRequest) -> Result<ResolvedPackage>;
     fn install(&self, pkg: &ResolvedPackage, progress: ProgressTx) -> Result<()>;
-    fn verify(&self, pkg: &ResolvedPackage) -> Result<bool>;    // hash check only
-    fn activate(&self, env: &Environment) -> Result<ShellEnv>;  // for `env`/`shell`
+    fn verify(&self, pkg: &ResolvedPackage) -> Result<bool>;
     fn remove(&self, pkg: &ResolvedPackage) -> Result<()>;
 }
-
-pub enum Progress {
-    Stage(&'static str),            // "resolving", "verifying"
-    Bytes { done: u64, total: u64 },
-    Log(String),                     // always tee'd to disk; TUI shows it only in the log drawer
-    Done,
-    Failed(String),
-}
-pub type ProgressTx = tokio::sync::mpsc::UnboundedSender<Progress>;
 ```
 
-`ProgressTx` exists for the TUI (see `PLAN.md`) — every backend reports through it even in non-interactive CLI mode, where it's just rendered as plain stdout lines. One code path, two renderers.
+Two backends are implemented:
 
-| Backend                            | Repro.  | Speed         | GUI (X11/Wayland)           | Ships in |
-| ---------------------------------- | ------- | ------------- | --------------------------- | -------- |
-| micromamba (litex-hub/conda-forge) | high    | fast          | native                      | v1       |
-| oss-cad-suite (tarball)            | high    | fast          | native                      | v1       |
-| nix (nix-eda)                      | highest | fast (cached) | native                      | phase 3  |
-| distrobox (podman/docker)          | high    | fast          | native (host socket shared) | phase 3  |
-| source build                       | medium  | slow          | native                      | phase 3  |
+| Backend | What it installs | Mechanism |
+|---------|-----------------|-----------|
+| **Micromamba** | ASIC tools (openroad, magic, klayout, netgen), analog tools (xschem, ngspice, xyce, gaw) | `micromamba create -p envs/_<tool> <channel>::<package>` — one conda prefix per tool |
+| **OSS CAD Suite** | Synthesis (yosys), simulation (iverilog, verilator, gtkwave), FPGA (nextpnr, icestorm, prjtrellis, openfpgaloader), formal (sby, boolector, z3) | Single ~700 MB tarball from GitHub releases, extracted to `envs/oss-cad-suite/`. All tools share one installation. Cached by release date. |
 
-Distrobox over raw Docker/Podman specifically because it shares host X11/Wayland/audio/HOME automatically — the GUI-forwarding pain point stops being edash's problem to solve.
+`actions.rs` calls backends — no backend-specific logic exists outside `src/backend/`.
 
-Xyce has no conda-forge/litex-hub package, but the tarball itself is a plain, ungated download — no account needed. Only the official prebuilt binary (`XyceNF`, RHEL8 RPM only) is restricted, and it bundles proprietary models anyway, so it's not the build edash wants. `source` backend fetches the tarball, builds against Trilinos via CMake, MPI optional for the parallel ("multicore") variant.
+### Lockfile
 
-## Backend bootstrapping
+`~/.local/share/edash/edash.lock` is a TOML file that records exactly what is installed:
 
-edash's backends are not assumed to be preinstalled. On first use of any backend, edash checks whether the binary is on `PATH` and, if missing, offers to fetch it to `~/.edash/bin/`. This is the same model `rustup` uses for toolchains — one command, self-contained, no system package manager involved.
+```toml
+version = 1
+generated = "2026-07-14T12:00:00Z"
 
-**micromamba** (v1, default): single static C++ binary, ~25 MB, zero runtime dependencies. If not found on `PATH`: offer `curl -L micro.mamba.pm/install.sh | bash` equivalent (download + extract to `~/.edash/bin/micromamba`). User can decline — in that case, print the install URL and exit with a clear message. No root, no Python, no pollution outside `~/.edash/`.
+[[package]]
+name = "yosys"
+version = "oss-cad-suite"
+backend = "oss-cad-suite"
+sha256 = ""
 
-**oss-cad-suite** (v1, FPGA/formal): prebuilt tarball from GitHub releases. Fetched on demand, extracted to `~/.edash/envs/` — same model, different artifact shape. The tarball is self-contained (static-linked binaries), so no additional dependencies beyond what's in the archive.
+[[package]]
+name = "magic"
+version = "8.3.465_0_g5477395"
+channel = "litex-hub"
+backend = "micromamba"
+sha256 = ""
 
-**ciel** (v1, PDK): single Python package (`pip install ciel`). If not found: offer `pip install --user ciel` or install into edash's own venv under `~/.edash/`. The venv approach is preferred — it avoids touching the user's system Python and guarantees a known-good version.
+[pdk.sky130]
+variant = "sky130A"
+manager = "ciel"
+ref = "d658698bd8bcf4e05fc7b5991a701247ba0d744c"
+sha256 = ""
+```
 
-**nix / distrobox / source** (phase 3): each will need its own preflight check, but the principle is the same — detect, offer, fall back to a clear error message.
+The lockfile is the system's source of truth for idempotency — `install` checks it first and skips if a package is already recorded and present on disk. `remove` prunes entries. All other commands read it.
 
-This means edash itself remains a pure Rust static binary. The backends it drives are fetched on demand, not bundled. The `doctor` command checks backend availability as part of its preflight before running functional tests.
+### Actions
 
-## PDK handling
+`src/actions.rs` is the shared orchestrator between CLI and TUI. Every install and remove operation — whether triggered by `edash install digital` or pressing `i` in the TUI — goes through the same functions:
 
-Wraps `ciel` (formerly Volare — same Efabless/ChipFoundry lineage, renamed upstream) instead of reimplementing PDK fetch/version logic. `install sky130` → catalog marks it `manager: ciel` → shells out to `ciel enable --pdk sky130 <ref>` → records the resolved commit + hash in the lock.
+- `install_tool()` — idempotent, dispatches to the right backend, updates the lockfile
+- `install_pdk()` — delegates to `ciel`, records in lockfile
+- `remove_tool()` / `remove_pdk()` / `remove_all_pdks()` — clean up disk and lockfile
+- `remove_env()` — removes an environment's tools, protecting shared tools used by other envs
+- `is_tool_installed()` — checks both lockfile and disk
 
-## Doctor vs verify
+### PDK management
 
-Two commands, two costs — the original draft treated them as one job.
+PDKs are managed through two subsystems:
 
-- **`verify`**: lock hash vs installed file hash. Milliseconds. Catches corruption/tampering.
-- **`doctor`**: actually runs each tool. Seconds to minutes. Catches broken shared libs (`libxaw`, `libncurses`) that a present-and-hash-correct binary can still fail on.
+**Installation** (`pdk/ciel.rs`): Wraps the `ciel` CLI tool. `install_pdk("sky130")` calls `ciel ls-remote`, `ciel fetch`, and `ciel enable`. PDKs are installed to `~/.local/share/edash/pdks/` with symlinks at the root (e.g. `pdks/sky130A → ciel/sky130/versions/<ref>/sky130A`).
 
-| Tool      | doctor check                                      |
-| --------- | ------------------------------------------------- |
-| yosys     | synthesize 3-line module → JSON                   |
-| openroad  | load empty design, run `init_floorplan`           |
-| ngspice   | DC sweep on resistor divider, check output vector |
-| xyce      | same DC sweep, cross-check against ngspice output |
-| magic     | headless boot, run DRC on test cell               |
-| klayout   | load + export GDS round-trip                      |
-| verilator | compile + run trivial testbench                   |
-| sby       | run trivial `sat` task to completion              |
+**Configuration** (`pdk/config.rs`): Per-PDK YAML files in `catalog/pdks/` define paths to technology files. `resolve_pdk_vars()` generates environment variables like `SKY130A_SPICE_DIR`, `GF180MCUD_MAGIC_RCFILE`, etc. These are exported by `edash env` and `edash shell`.
 
-## Config resolution order
+## CLI surface
 
-1. CLI flags
-2. Project `edash.yaml` (walked upward from cwd, git-style)
-3. User `~/.config/edash/config.toml`
-4. Built-in defaults
+| Command | Behavior |
+|---------|----------|
+| `install <name...>` | Resolves each arg (env, tool, or PDK), installs, updates lockfile |
+| `list` | Installed packages + PDKs with versions, channels, and disk status |
+| `remove <name...>` | Env-level removal (protects shared tools) or individual tool/PDK removal |
+| `env <name>` | Prints `export` statements for PATH, PDK_ROOT, and per-PDK vars |
+| `shell <name>` | Spawns subshell with environment activated, prints MOTD |
+| `doctor <name>` | Functional checks: runs each tool against a minimal test |
+| `search <query>` | Case-insensitive search across envs, tools, and PDKs |
+| `why <tool>` | Shows which environments pull in a given tool |
+| `outdated` | Compares locked versions against latest available |
+| `clean [--dry-run]` | Removes unreferenced install directories |
+| `cache` | Reports download cache size |
+| `export --format <fmt>` | Generates Dockerfile or GitHub Actions workflow |
+| `pdk [name]` | Lists PDKs or shows per-PDK config and usage |
+| `update` | Self-update: fetches latest GitHub release, atomic catalog+binary swap |
+| `repair` | Recovers from interrupted updates (stale `.old`/`.new` dirs) |
+
+## Self-update mechanism
+
+`edash update` implements crash-safe self-updates:
+
+1. Fetches latest release tag from GitHub API
+2. Short-circuits if already at that version (checks `installation.yaml`)
+3. Downloads binary + catalog tarball to `downloads_dir()`
+4. Sanity-checks the new binary (`--version`)
+5. Extracts catalog and stages it via the hidden `__internal stage-catalog` subcommand
+6. Atomic two-rename swaps: `catalog/base → base.old`, `base.new → base`; then `edash → edash.old`, new → edash
+7. Runs `__internal self-test` against the live binary
+8. On success: cleans up `.old` dirs, writes `installation.yaml`
+9. On failure: restores `edash.old`, keeps new catalog (already validated)
+
+`edash repair` handles interrupted updates by checking for leftover `.old`/`.new` dirs and `edash.old` binaries, completing or rolling back as appropriate. It can be run manually or is suggested at startup if stale files are detected.
+
+Hidden subcommands (`__internal paths`, `__internal stage-catalog`, `__internal self-test`) are gated behind `EDASH_INSTALLER=1` and excluded from `--help` — they exist only for `install.sh` and `edash update` to use.
+
+## TUI
+
+The TUI launches when `edash` is invoked with no arguments and stdout is a TTY. It's built with `ratatui` + `crossterm`:
+
+- **Three-panel layout**: sidebar (environments + PDKs + downloads), search bar, content area (tool table / PDK table / doctor results / download queue)
+- **Keyboard-driven**: `j/k`/`↑↓` navigate, `←→`/`tab` switch panes, `i` installs, `r` removes, `d` runs doctor, `E` opens a shell, `/` searches, `?` shows help, `q` quits
+- **Background threads**: install and doctor operations run in spawned threads, reporting progress through MPSC channels. The main event loop drains these channels each tick
+- **Non-TTY fallback**: when stdout is not a terminal, the same operations run as linear CLI output
+
+The TUI receives a `CatalogSource` and passes it through to the resolver and spawn functions, same as the CLI path. There is no code path divergence between CLI and TUI for catalog loading, installation, or removal.
 
 ## On-disk layout
 
 ```
-~/.edash/
-├── config.toml
-├── envs/
-│   ├── digital/        # micromamba prefix
-│   ├── analog/
-│   └── fpga/
-├── pdks/                # ciel-managed
-├── cache/                # content-addressed downloads
-└── bin/                  # bootstrapped backends (micromamba) + shims
+~/.local/share/edash/          ($XDG_DATA_HOME/edash)
+├── edash.lock                  # System-wide lockfile (TOML)
+├── installation.yaml           # Install metadata (method, version, timestamp)
+├── catalog/
+│   └── base/                   # Official catalog (shipped, updated by `edash update`)
+│       ├── index.yaml
+│       ├── tools.yaml
+│       ├── digital.yaml
+│       ├── analog.yaml
+│       └── pdks/*.yaml
+├── envs/                       # Tool installations
+│   ├── _yosys/                 # Per-tool micromamba prefixes
+│   ├── _magic/
+│   ├── _openroad/
+│   ├── ...
+│   └── oss-cad-suite/          # Shared monolithic tarball install
+├── pdks/                       # PDK data (ciel-managed)
+│   ├── sky130A → ciel/sky130/versions/<ref>/sky130A
+│   ├── gf180mcuD → ...
+│   ├── ihp-sg13g2 → ...
+│   └── ciel/                   # Ciel internal store
+├── cache/                      # Download cache (oss-cad-suite tarballs)
+├── downloads/                  # Staging area for updates
+├── bin/                        # Bootstrapped binaries (micromamba) + edash itself
+└── logs/                       # Subprocess output logs
+
+~/.config/edash/               ($XDG_CONFIG_HOME/edash)
+└── catalog/
+    └── user/                   # User catalog overrides (never touched by updates)
+        ├── tools.yaml          # Additional/override tool definitions
+        ├── index.yaml          # Additional/override envs or PDKs
+        └── pdks/*.yaml         # Additional/override PDK configs
 ```
 
-## Shell integration
+## External dependencies at runtime
 
-```bash
-edash env digital              # prints export statements
-eval "$(edash env digital)"    # activate in current shell, no subshell
-edash shell digital            # or: spawn a subshell
-```
-
-## Export
-
-```bash
-edash export --format github-actions > .github/workflows/eda-ci.yml
-edash export --format dockerfile > Dockerfile
-edash export --format offline-bundle --env digital -o digital-bundle.tar.zst
-```
-
-Offline bundle matters more than CI export for this domain specifically — IP-controlled EDA labs are commonly air-gapped. USB-transferable pre-resolved bundles solve a real problem CI export doesn't touch.
-
-## Project pin (rustup/pyenv-style)
-
-`edash.yaml` present in a directory, or any parent, auto-selects that environment on `cd` — same pattern as `.nvmrc` / `rust-toolchain.toml`. No manual `edash shell` needed inside a project tree once the shell hook is sourced once.
+| Dependency | Purpose | Required | Bootstrap |
+|-----------|---------|----------|-----------|
+| `micromamba` | Conda-based tool installs | For micromamba tools | Auto-offered on first use |
+| `ciel` | PDK fetch/enable | For PDK installs | Fail-fast with install instructions |
+| `curl` | oss-cad-suite download, `edash update` | For oss-cad-suite + updates | Expected on all Linux systems |
+| `tar` | oss-cad-suite extraction, catalog staging | For oss-cad-suite + updates | Expected on all Linux systems |
 
 ## Tech stack
 
-| Choice                        | Why                                                                                                                                                                                    |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Rust + clap** (recommended) | static binary, zero runtime dep, `reqwest`+`indicatif` for fetch/progress, cross-compiles to aarch64 via musl                                                                          |
-| Go + cobra (fallback)         | simpler than Rust, still a static binary, faster v1 if Rust is the bottleneck                                                                                                          |
-| Python + Typer                | avoid for the installer itself — a dependency manager needing a Python runtime pre-installed undercuts its own pitch. Fine for internal automation scripts, not the distributed binary |
+| Component | Choice | Why |
+|-----------|--------|-----|
+| Language | Rust (edition 2021) | Static binary, zero runtime deps |
+| CLI | `clap` 4 (derive) | Subcommand parsing, env var binding |
+| TUI | `ratatui` 0.29 + `crossterm` 0.28 | Terminal UI with cross-terminal support |
+| Async | `tokio` 1 | Subprocess management, channel-based progress |
+| Serialization | `serde_yaml` (catalog), `toml` (lockfile) | Human-readable, hand-editable formats |
+| HTTP | `reqwest` 0.12 (API), `curl` subprocess (downloads) | reqwest for API calls, curl for large file transfers |
+| Path resolution | `dirs` 6 | XDG base directories |
+| Hashing | `sha2` + `hex` | Content verification |
 
 ## Testing
 
-Mock backend (`tests/mock_backend.rs`) fakes install/verify without pulling real binaries — CI validates manifest resolution, lock generation, and catalog parsing in seconds, not gigabytes.
+95 integration tests across 11 files in `tests/`. Key areas covered:
 
-## Roadmap
+- **Resolver**: environment resolution, tool resolution, PDK resolution, search, `which_envs`, listing, multi-backend, `load_from`
+- **Catalog types**: `BackendKind`, `ToolEntry`, `EnvironmentDef`, `PdkEntry`, `CatalogIndex` deserialization and roundtrips
+- **Paths**: all 14 path functions, XDG correctness, absolute paths
+- **CatalogSource**: `Path` variant, `list_pdk_names`, `read_pdk_config`, clone
+- **Lockfile**: write/read roundtrip, package lookup, PDK serialization, empty sections
+- **Installation metadata**: read/write roundtrip, overwrite, serde
+- **PDK config**: all three PDK configs, env var resolution, path verification
+- **Installer**: `__internal` subcommand gating, help visibility, version output
+- **Actions**: `is_tool_installed` sanity checks
 
-| Phase | Scope                                                                      |
-| ----- | -------------------------------------------------------------------------- |
-| 0     | manifest + lock + micromamba backend; `install`/`list`/`verify`/`remove`   |
-| 1     | catalog registry + PDK (`ciel`) + `doctor` + `env`/`shell`                 |
-| 2     | `outdated`/`why`/`clean`/`cache`, CI export, offline bundle export         |
-| 3     | nix + distrobox + source backends as plugins; project pin file auto-switch |
-
-This table is capability scope, not build order. `PLAN.md` sequences the actual work (TUI included) — that's the file to follow session to session.
+Tests use `tempfile` for isolation and the real `catalog/` directory from the repo for data-driven tests. The installer tests spawn the actual `edash` binary for end-to-end CLI verification.
