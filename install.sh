@@ -33,7 +33,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --system) SYSTEM=1 ;;
         --help|-h)
-            echo "Usage: curl ... | sh [-s -- --system]"
+            echo "Usage: curl ... | bash [-s -- --system]"
             echo "  --system  install to /usr/local (requires root)"
             exit 0
             ;;

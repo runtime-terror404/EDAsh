@@ -6,7 +6,7 @@ Reproducible EDA toolchain manager — rustup/pyenv semantics, for VLSI, FPGA, a
 
 ```bash
 # Install edash
-curl -sSL https://raw.githubusercontent.com/runtime-terror404/edash/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/runtime-terror404/edash/main/install.sh | bash
 
 # Install a toolchain
 edash install digital
@@ -35,7 +35,7 @@ See the [FAQ](docs/faq.md) for common questions or the [glossary](docs/glossary.
 ### Linux (x86_64, aarch64)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/runtime-terror404/edash/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/runtime-terror404/edash/main/install.sh | bash
 ```
 
 Installs to `~/.local/bin/edash`. The script detects your architecture, downloads the latest release, and sets up the catalog.
@@ -43,7 +43,7 @@ Installs to `~/.local/bin/edash`. The script detects your architecture, download
 To install system-wide (CI, lab machines):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/runtime-terror404/edash/main/install.sh | sh -s -- --system
+curl -sSL https://raw.githubusercontent.com/runtime-terror404/edash/main/install.sh | bash -s -- --system
 ```
 
 ### From source
