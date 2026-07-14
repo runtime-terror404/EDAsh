@@ -108,6 +108,13 @@ fn find_micromamba() -> PathBuf {
     if local.exists() {
         return local;
     }
+    // Official micromamba installer puts it in ~/.local/bin/
+    let home_local = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/root"))
+        .join(".local/bin/micromamba");
+    if home_local.exists() {
+        return home_local;
+    }
     PathBuf::from("micromamba")
 }
 
