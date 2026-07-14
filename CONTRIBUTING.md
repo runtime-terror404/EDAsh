@@ -179,3 +179,5 @@ cargo run -- -c ./catalog
   cargo run -- -c ./catalog doctor <new-tool>
   ```
 - If adding a PDK, verify the paths exist in the installed PDK directory
+
+[`docs/wip.md`](docs/wip.md) tracks known bugs, incomplete features, and future plans — another place to find something to work on.

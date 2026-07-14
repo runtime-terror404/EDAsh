@@ -28,6 +28,8 @@ edash installs and manages EDA tools the way rustup manages Rust toolchains: one
 - **PDK management.** `edash install sky130` fetches and enables the SKY130 PDK via ciel. `edash env` exports PDK path variables for magic, netgen, xschem, klayout, and ngspice.
 - **Self-updating.** `edash update` fetches the latest release with crash-safe atomic swaps. `edash repair` recovers from interrupted updates.
 
+See the [FAQ](docs/faq.md) for common questions or the [glossary](docs/glossary.md) for EDA terminology.
+
 ## Installation
 
 ### Linux (x86_64, aarch64)
@@ -173,7 +175,9 @@ See [`docs/architecture.md`](docs/architecture.md) for the full catalog schema, 
 
 ## Contributing
 
-The easiest contribution is adding a tool to [`catalog/tools.yaml`](catalog/tools.yaml). See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+The easiest contribution is adding a tool to [`catalog/tools.yaml`](catalog/tools.yaml).
+Check [`docs/wip.md`](docs/wip.md) for open issues and future plans.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Acknowledgments
 
