@@ -40,12 +40,11 @@ jobs:
           cp target/${{ matrix.target }}/release/edash edash-${{ matrix.target }}
           chmod +x edash-${{ matrix.target }}
 
-      - name: Upload binary
-        uses: softprops/action-gh-release@v2
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: edash-${{ matrix.target }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
+          name: edash-${{ matrix.target }}
+          path: edash-${{ matrix.target }}
 
   release-assets:
     runs-on: ubuntu-22.04
@@ -53,41 +52,67 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Gather binaries
+        run: |
+          mkdir -p release-files
+          find artifacts/ -name 'edash-*' -exec cp {} release-files/ \;
+          ls release-files/
+
       - name: Install micromamba (for lock generation)
         run: |
           curl -L micro.mamba.pm/install.sh | bash
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          pip3 install --user pyyaml
 
       - name: Generate locks for micromamba tools
+        shell: python3 {0}
         run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          mkdir -p catalog/locks
-          # Parse tools.yaml, generate explicit lock per micromamba tool
-          python3 -c "
-          import yaml, subprocess, os
+          import yaml, subprocess, os, sys
+
           tools = yaml.safe_load(open('catalog/tools.yaml'))
+          os.makedirs('catalog/locks', exist_ok=True)
+          generated, failed = 0, 0
+
           for name, cfg in tools.items():
-              if cfg['backend'] != 'micromamba':
+              if cfg.get('backend') != 'micromamba':
                   continue
-              ch = cfg.get('channel', 'conda-forge')
+              channel = cfg.get('channel', 'conda-forge')
               pkg = cfg.get('package', name)
               prefix = f'/tmp/_edash_lock_{name}'
-              print(f'Resolving {name} ({ch}::{pkg})...')
-              subprocess.run([
+
+              # Use primary channel + conda-forge fallback for base libraries
+              cmd = [
                   'micromamba', 'create', '-p', prefix,
                   '--override-channels', '--strict-channel-priority',
-                  '-c', ch, pkg, '-y', '--quiet'
-              ], check=True)
+                  '-c', channel, '-c', 'conda-forge',
+                  pkg, '-y', '--quiet'
+              ]
+              print(f'Resolving {name} ({channel}::{pkg})... ', end='')
+
+              r = subprocess.run(cmd, capture_output=True)
+              if r.returncode != 0:
+                  failed += 1
+                  print(f'SKIPPED (solver failed)')
+                  subprocess.run(['rm', '-rf', prefix], capture_output=True)
+                  continue
+
               out = subprocess.check_output([
-                  'micromamba', 'list', '-p', prefix,
-                  '--explicit', '--md5'
+                  'micromamba', 'list', '-p', prefix, '--explicit', '--md5'
               ])
               with open(f'catalog/locks/{name}.explicit.txt', 'wb') as f:
                   f.write(out)
               subprocess.run(['rm', '-rf', prefix])
-          print(f'Generated {len(os.listdir(\"catalog/locks\"))} lock files')
-          "
+              generated += 1
+              print(f'done')
+
+          print(f'Generated {generated} lock files, {failed} skipped')
+          if generated == 0 and failed > 0:
+              print('No locks generated — release would be empty. Check tool channels.')
+              sys.exit(1)
 
       - name: Package catalog
         run: |
@@ -104,11 +129,13 @@ jobs:
             echo "  $f: sha256:$hash" >> manifest.yaml
           done
 
-      - name: Upload catalog + manifest + installer
+      - name: Upload release
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            release-files/*
             catalog.tar.gz
             manifest.yaml
             install.sh
           name: ${{ github.ref_name }}
+          generate_release_notes: true
