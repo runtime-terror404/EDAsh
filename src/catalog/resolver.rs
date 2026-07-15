@@ -182,6 +182,7 @@ impl Resolver {
             backend: BackendKind::from_str(&tool.backend),
             channel: tool.channel.clone(),
             package: tool.package.clone(),
+            explicit_urls: Vec::new(),
         }
     }
 

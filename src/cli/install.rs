@@ -22,7 +22,7 @@ pub async fn install(
         for item in &items {
             match item {
                 ResolvedItem::Tool(req) => {
-                    match crate::actions::install_tool(req) {
+                    match crate::actions::install_tool(req, source) {
                         Ok(pkg) => println!("  ✓ {} {}", pkg.name, pkg.version),
                         Err(e) => eprintln!("  ✗ {} — {}", req.name, e),
                     }

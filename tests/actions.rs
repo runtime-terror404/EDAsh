@@ -12,6 +12,7 @@ fn setup_lock(lock_path: &std::path::Path, packages: &[(&str, &str, &str)]) {
             channel: None,
             backend: backend.to_string(),
             sha256: String::new(),
+            explicit_urls: Vec::new(),
         });
     }
     if let Some(parent) = lock_path.parent() {

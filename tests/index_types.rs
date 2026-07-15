@@ -154,6 +154,7 @@ fn test_resolved_item_tool_and_pdk() {
         backend: BackendKind::Micromamba,
         channel: None,
         package: None,
+        explicit_urls: Vec::new(),
     });
     let pdk = ResolvedItem::Pdk(PdkRequest {
         name: "sky130".into(),

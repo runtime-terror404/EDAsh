@@ -554,7 +554,7 @@ fn spawn_install(app: &mut App, name: &str, source: &CatalogSource) {
             });
             let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "installing...".into(), done: false, error: None });
 
-            match crate::actions::install_tool(req) {
+            match crate::actions::install_tool(req, &src) {
                 Ok(_pkg) => {
                     let _ = tx.send(ProgressEvent { tool: req.name.clone(), stage: "done".into(), done: true, error: None });
                 }

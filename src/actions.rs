@@ -1,12 +1,13 @@
 use crate::backend::micromamba::MicromambaBackend;
 use crate::backend::oss_cad_suite::OssCadSuiteBackend;
 use crate::catalog::index::{BackendKind, PackageRequest};
+use crate::catalog::CatalogSource;
 use crate::lockfile::schema::{LockedPackage, LockedPdk, Lockfile};
 use crate::paths;
 use std::process::Command;
 
 /// Install a single tool. Idempotent — skips if already in lockfile and on disk.
-pub fn install_tool(req: &PackageRequest) -> Result<LockedPackage, Box<dyn std::error::Error>> {
+pub fn install_tool(req: &PackageRequest, source: &CatalogSource) -> Result<LockedPackage, Box<dyn std::error::Error>> {
     let lock_path = paths::lockfile_path();
     let mut lockfile = read_lockfile(&lock_path);
 
@@ -19,19 +20,25 @@ pub fn install_tool(req: &PackageRequest) -> Result<LockedPackage, Box<dyn std::
         lockfile.package.retain(|p| p.name != req.name);
     }
 
+    // Enrich request with pre-computed explicit URLs from catalog locks
+    let mut enriched = req.clone();
+    if let Some(urls) = source.read_tool_lock(&req.name) {
+        enriched.explicit_urls = urls;
+    }
+
     let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
 
-    let pkg = match req.backend {
+    let pkg = match enriched.backend {
         BackendKind::OssCadSuite => {
             let backend = OssCadSuiteBackend::new();
-            backend.install_package(req, ptx)?
+            backend.install_package(&enriched, ptx)?
         }
         _ => {
             let backend = MicromambaBackend::new();
             if !backend.is_available() {
                 return Err("micromamba not found. Install: curl -L micro.mamba.pm/install.sh | bash".into());
             }
-            backend.install_package(req, ptx)?
+            backend.install_package(&enriched, ptx)?
         }
     };
 

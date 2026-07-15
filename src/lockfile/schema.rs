@@ -21,6 +21,10 @@ pub struct LockedPackage {
     pub backend: String,
     #[serde(default)]
     pub sha256: String,
+    /// Exact conda package URLs with build hashes (from catalog/locks/).
+    /// Empty = use spec-based install with hermetic flags.
+    #[serde(default)]
+    pub explicit_urls: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

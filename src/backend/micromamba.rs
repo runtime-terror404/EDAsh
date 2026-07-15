@@ -36,24 +36,56 @@ impl MicromambaBackend {
         let exists = prefix.exists() && prefix.join("conda-meta").exists();
         let subcommand = if exists { "install" } else { "create" };
 
-        let _ = progress.send(Progress::Stage(format!(
-            "{}:{} <- {}::{}",
-            subcommand, req.name, channel, package
-        )));
+        let output = if !req.explicit_urls.is_empty() {
+            // Path A: explicit URLs — write to temp file, fetch directly, no solver
+            let _ = progress.send(Progress::Stage(format!(
+                "fetch:{} <- explicit lock ({} urls)",
+                req.name,
+                req.explicit_urls.len()
+            )));
+            let tmpdir = std::env::temp_dir().join(format!("edash_lock_{}", req.name));
+            std::fs::create_dir_all(&tmpdir)?;
+            let lock_file = tmpdir.join("explicit.txt");
+            std::fs::write(&lock_file, req.explicit_urls.join("\n") + "\n")?;
 
-        let output = Command::new(&self.binary)
-            .args([
-                subcommand,
-                "-c",
-                channel,
-                "-p",
-                &prefix.to_string_lossy(),
-                package,
-                "-y",
-                "--quiet",
-            ])
-            .output()
-            .map_err(|e| format!("failed to run micromamba: {}", e))?;
+            let result = Command::new(&self.binary)
+                .args([
+                    subcommand,
+                    "-p",
+                    &prefix.to_string_lossy(),
+                    "--file",
+                    &lock_file.to_string_lossy(),
+                    "-y",
+                    "--quiet",
+                ])
+                .output()
+                .map_err(|e| format!("failed to run micromamba: {}", e));
+            let _ = std::fs::remove_dir_all(&tmpdir);
+            result?
+        } else {
+            // Path B: spec-based — hermetic solver with controlled baseline
+            let _ = progress.send(Progress::Stage(format!(
+                "{}:{} <- {}::{}",
+                subcommand, req.name, channel, package
+            )));
+
+            Command::new(&self.binary)
+                .args([
+                    subcommand,
+                    "--override-channels",
+                    "--strict-channel-priority",
+                    "-c",
+                    channel,
+                    "-p",
+                    &prefix.to_string_lossy(),
+                    package,
+                    "-y",
+                    "--quiet",
+                ])
+                .env("CONDA_OVERRIDE_GLIBC", "2.35")
+                .output()
+                .map_err(|e| format!("failed to run micromamba: {}", e))?
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -68,6 +100,7 @@ impl MicromambaBackend {
             channel: Some(channel.to_string()),
             backend: "micromamba".to_string(),
             sha256: String::new(),
+            explicit_urls: req.explicit_urls.clone(),
         })
     }
 

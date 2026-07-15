@@ -78,4 +78,35 @@ impl CatalogSource {
         }
         names
     }
+
+    /// Read a pre-computed explicit lock file for a tool.
+    /// Returns URLs if found, None if the tool has no pre-computed lock.
+    pub fn read_tool_lock(&self, tool_name: &str) -> Option<Vec<String>> {
+        let rel_path = format!("locks/{}.explicit.txt", tool_name);
+        match self {
+            CatalogSource::Path(base) => {
+                let p = base.join(&rel_path);
+                if p.exists() {
+                    let content = std::fs::read_to_string(&p).ok()?;
+                    Some(content.lines().filter(|l| !l.starts_with('#') && !l.starts_with('@') && !l.trim().is_empty()).map(|l| l.to_string()).collect())
+                } else {
+                    None
+                }
+            }
+            CatalogSource::Default => {
+                let user_p = crate::paths::catalog_user_dir().join(&rel_path);
+                if user_p.exists() {
+                    let content = std::fs::read_to_string(&user_p).ok()?;
+                    return Some(content.lines().filter(|l| !l.starts_with('#') && !l.starts_with('@') && !l.trim().is_empty()).map(|l| l.to_string()).collect());
+                }
+                let base_p = crate::paths::catalog_base_dir().join(&rel_path);
+                if base_p.exists() {
+                    let content = std::fs::read_to_string(&base_p).ok()?;
+                    Some(content.lines().filter(|l| !l.starts_with('#') && !l.starts_with('@') && !l.trim().is_empty()).map(|l| l.to_string()).collect())
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }

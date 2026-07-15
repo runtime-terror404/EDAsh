@@ -53,6 +53,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install micromamba (for lock generation)
+        run: |
+          curl -L micro.mamba.pm/install.sh | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          pip3 install --user pyyaml
+
+      - name: Generate locks for micromamba tools
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          mkdir -p catalog/locks
+          # Parse tools.yaml, generate explicit lock per micromamba tool
+          python3 -c "
+          import yaml, subprocess, os
+          tools = yaml.safe_load(open('catalog/tools.yaml'))
+          for name, cfg in tools.items():
+              if cfg['backend'] != 'micromamba':
+                  continue
+              ch = cfg.get('channel', 'conda-forge')
+              pkg = cfg.get('package', name)
+              prefix = f'/tmp/_edash_lock_{name}'
+              print(f'Resolving {name} ({ch}::{pkg})...')
+              subprocess.run([
+                  'micromamba', 'create', '-p', prefix,
+                  '--override-channels', '--strict-channel-priority',
+                  '-c', ch, pkg, '-y', '--quiet'
+              ], check=True)
+              out = subprocess.check_output([
+                  'micromamba', 'list', '-p', prefix,
+                  '--explicit', '--md5'
+              ])
+              with open(f'catalog/locks/{name}.explicit.txt', 'wb') as f:
+                  f.write(out)
+              subprocess.run(['rm', '-rf', prefix])
+          print(f'Generated {len(os.listdir(\"catalog/locks\"))} lock files')
+          "
+
       - name: Package catalog
         run: |
           tar -czf catalog.tar.gz -C catalog .

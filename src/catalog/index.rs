@@ -59,6 +59,8 @@ pub struct PackageRequest {
     pub backend: BackendKind,
     pub channel: Option<String>,
     pub package: Option<String>,
+    /// Pre-computed explicit conda URLs (from catalog/locks/). Empty = spec-based fallback.
+    pub explicit_urls: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
