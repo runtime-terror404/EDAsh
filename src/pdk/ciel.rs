@@ -7,7 +7,7 @@ pub fn resolve_and_install(
     variant: &Option<String>,
 ) -> Result<LockedPdk, Box<dyn std::error::Error>> {
     if which::which("ciel").is_err() {
-        return Err("ciel not found. Install: pip install --user ciel".into());
+        return Err("ciel not found. Install: pipx install ciel".into());
     }
 
     let pdk_root = paths::pdks_dir();

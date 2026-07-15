@@ -161,4 +161,19 @@ case ":$PATH:" in
         ;;
 esac
 
+echo ""
+echo "  --- Dependencies ---"
+check_dep() {
+    local name="$1" cmd="$2"
+    if command -v "$name" >/dev/null 2>&1; then
+        echo "    ✓ $name"
+    else
+        echo "    ✗ $name not found — $cmd"
+    fi
+}
+check_dep curl       "install curl with your package manager"
+check_dep tar        "install tar with your package manager"
+check_dep micromamba "curl -L micro.mamba.pm/install.sh | bash"
+check_dep ciel       "pipx install ciel"
+echo ""
 echo "  Run 'edash' to launch the dashboard, or 'edash --help' for commands."

@@ -1,8 +1,8 @@
 [package]
 name = "edash"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-description = "Reproducible EDA toolchain manager (rustup/pyenv semantics, for VLSI/FPGA/analog tools + PDKs)"
+description = "Open-source EDA toolchain manager for ASIC, FPGA, and analog design"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
