@@ -613,11 +613,28 @@ fn render(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Length(6), Constraint::Min(1)])
         .split(content_area);
 
-    let ver = format!("{:>67}", format!("v{}", version));
-    let sep = "─".repeat(130);
-    let title = format!(
-        "────┐        ┌──────┐   ┌─┐     ┌────────┐      ┌───────┐ {ver}\n    └────────┘      └───┘ └─────┘        └──────┘       └─────────────────────────────────────────────────────────────────────────\n \u{2007}░█▀▀░█▀▄░█▀█░█▀▀░█░█\n \u{2007}░█▀▀░█░█░█▀█░▀▀█░█▀█                       Unified EDA Package Manager Built on Rust.\n \u{2007}░▀▀▀░▀▀░░▀░▀░▀▀▀░▀░▀\n{sep}"
-    );
+    let w = v[0].width as usize;
+    let ver_str = format!("v{}", version);
+
+    // Line 1: waveform top + right-aligned version
+    let l1_prefix = "────┐        ┌──────┐   ┌─┐     ┌────────┐      ┌───────┐ ";
+    let l1_pad = w.saturating_sub(l1_prefix.chars().count() + ver_str.chars().count());
+    let line1 = format!("{}{}{}", l1_prefix, " ".repeat(l1_pad), ver_str);
+
+    // Line 2: waveform bottom + stretchable tail
+    let l2_prefix = "    └────────┘      └───┘ └─────┘        └──────┘       └";
+    let l2_tail = w.saturating_sub(l2_prefix.chars().count());
+    let line2 = format!("{}{}", l2_prefix, "─".repeat(l2_tail));
+
+    // Lines 3-5: EDAsh logo block (fixed width)
+    let line3 = " ░█▀▀░█▀▄░█▀█░█▀▀░█░█";
+    let line4 = " ░█▀▀░█░█░█▀█░▀▀█░█▀█  Open-source EDA toolchain manager for ASIC, FPGA, and analog design.";
+    let line5 = " ░▀▀▀░▀▀░░▀░▀░▀▀▀░▀░▀";
+
+    // Line 6: dynamic separator
+    let sep = "─".repeat(w);
+
+    let title = format!("{line1}\n{line2}\n{line3}\n{line4}\n{line5}\n{sep}");
     f.render_widget(Paragraph::new(title), v[0]);
 
     app.catalog.draw(f, v[1]);

@@ -104,12 +104,22 @@ log "extracting catalog..."
 mkdir -p "$TMPDIR/catalog"
 tar -xzf "$TMPDIR/catalog.tar.gz" -C "$TMPDIR/catalog" || err "catalog extraction failed"
 
-# Use hidden installer command to stage catalog
-EDASH_INSTALLER=1 "$TMPDIR/edash" __internal stage-catalog \
-    "$TMPDIR/catalog" "$TMPDIR/catalog/manifest.yaml" 2>/dev/null || true
+# Clean up stale staging dir from previous interrupted installs
+rm -rf "${HOME}/.local/share/edash/catalog/base.new"
 
-# If stage-catalog fails (e.g. first install with no base), do a simple copy
-if [ ! -d "${HOME}/.local/share/edash/catalog/base" ]; then
+if [ -d "${HOME}/.local/share/edash/catalog/base" ]; then
+    # Update: stage catalog via hidden subcommand, then swap atomically
+    log "updating catalog..."
+    EDASH_INSTALLER=1 "$TMPDIR/edash" __internal stage-catalog \
+        "$TMPDIR/catalog" "$TMPDIR/catalog/manifest.yaml" 2>/dev/null || true
+    if [ -d "${HOME}/.local/share/edash/catalog/base.new" ]; then
+        rm -rf "${HOME}/.local/share/edash/catalog/base.old" 2>/dev/null || true
+        mv "${HOME}/.local/share/edash/catalog/base" "${HOME}/.local/share/edash/catalog/base.old" 2>/dev/null || true
+        mv "${HOME}/.local/share/edash/catalog/base.new" "${HOME}/.local/share/edash/catalog/base" 2>/dev/null || true
+        rm -rf "${HOME}/.local/share/edash/catalog/base.old" 2>/dev/null || true
+    fi
+else
+    # First install: copy directly, no staging needed
     log "first install — setting up catalog..."
     mkdir -p "${HOME}/.local/share/edash/catalog/base"
     cp -a "$TMPDIR/catalog/." "${HOME}/.local/share/edash/catalog/base/"

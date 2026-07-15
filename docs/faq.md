@@ -111,4 +111,13 @@ edash remove digital analog    # removes all tools (shared tools protected)
 edash remove pdks              # removes all PDKs
 rm -rf ~/.local/share/edash    # removes all edash data
 rm ~/.local/bin/edash          # removes the binary
+
+## Why do some tools fail to install on newer Ubuntu?
+
+Some conda packages from litex-hub and vlsida-eda channels are built against specific library versions (glibc, libzlib, hdf5, gtk3). On newer distro releases (Ubuntu 26.04+) the system libraries may be incompatible with what the channel packages expect, causing `libmamba Could not solve for environment specs` errors.
+
+This is a packaging issue in the conda channel, not an edash bug. Workarounds:
+- Use Ubuntu 22.04 or 24.04 (tested and working)
+- Try installing individual tools instead of the full environment — some tools may resolve while others don't
+- Contact the channel maintainer if a package consistently fails
 ```

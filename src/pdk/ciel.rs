@@ -6,6 +6,10 @@ pub fn resolve_and_install(
     family: &str,
     variant: &Option<String>,
 ) -> Result<LockedPdk, Box<dyn std::error::Error>> {
+    if which::which("ciel").is_err() {
+        return Err("ciel not found. Install: pip install --user ciel".into());
+    }
+
     let pdk_root = paths::pdks_dir();
     let variant_str = variant.as_deref().unwrap_or(family);
     let family = pdk_family(family);
