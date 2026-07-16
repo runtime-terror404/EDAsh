@@ -79,33 +79,19 @@ impl CatalogSource {
         names
     }
 
-    /// Read a pre-computed explicit lock file for a tool.
-    /// Returns URLs if found, None if the tool has no pre-computed lock.
-    pub fn read_tool_lock(&self, tool_name: &str) -> Option<Vec<String>> {
+    /// Returns the path to a pre-computed explicit lock file if it exists.
+    pub fn tool_lock_path(&self, tool_name: &str) -> Option<PathBuf> {
         let rel_path = format!("locks/{}.explicit.txt", tool_name);
         match self {
             CatalogSource::Path(base) => {
                 let p = base.join(&rel_path);
-                if p.exists() {
-                    let content = std::fs::read_to_string(&p).ok()?;
-                    Some(content.lines().filter(|l| !l.starts_with('#') && !l.starts_with('@') && !l.trim().is_empty()).map(|l| l.to_string()).collect())
-                } else {
-                    None
-                }
+                if p.exists() { Some(p) } else { None }
             }
             CatalogSource::Default => {
                 let user_p = crate::paths::catalog_user_dir().join(&rel_path);
-                if user_p.exists() {
-                    let content = std::fs::read_to_string(&user_p).ok()?;
-                    return Some(content.lines().filter(|l| !l.starts_with('#') && !l.starts_with('@') && !l.trim().is_empty()).map(|l| l.to_string()).collect());
-                }
+                if user_p.exists() { return Some(user_p); }
                 let base_p = crate::paths::catalog_base_dir().join(&rel_path);
-                if base_p.exists() {
-                    let content = std::fs::read_to_string(&base_p).ok()?;
-                    Some(content.lines().filter(|l| !l.starts_with('#') && !l.starts_with('@') && !l.trim().is_empty()).map(|l| l.to_string()).collect())
-                } else {
-                    None
-                }
+                if base_p.exists() { Some(base_p) } else { None }
             }
         }
     }

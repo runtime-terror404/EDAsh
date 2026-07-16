@@ -20,25 +20,22 @@ pub fn install_tool(req: &PackageRequest, source: &CatalogSource) -> Result<Lock
         lockfile.package.retain(|p| p.name != req.name);
     }
 
-    // Enrich request with pre-computed explicit URLs from catalog locks
-    let mut enriched = req.clone();
-    if let Some(urls) = source.read_tool_lock(&req.name) {
-        enriched.explicit_urls = urls;
-    }
+    // Look up pre-computed lock file from catalog
+    let catalog_lock = source.tool_lock_path(&req.name);
 
     let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
 
-    let pkg = match enriched.backend {
+    let pkg = match req.backend {
         BackendKind::OssCadSuite => {
             let backend = OssCadSuiteBackend::new();
-            backend.install_package(&enriched, ptx)?
+            backend.install_package(req, ptx)?
         }
         _ => {
             let backend = MicromambaBackend::new();
             if !backend.is_available() {
                 return Err("micromamba not found. Install: curl -L micro.mamba.pm/install.sh | bash".into());
             }
-            backend.install_package(&enriched, ptx)?
+            backend.install_package(req, ptx, catalog_lock.as_deref())?
         }
     };
 

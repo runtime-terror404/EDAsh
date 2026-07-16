@@ -1,6 +1,6 @@
 [package]
 name = "edash"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Open-source EDA toolchain manager for ASIC, FPGA, and analog design"
 

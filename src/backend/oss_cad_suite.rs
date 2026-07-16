@@ -65,7 +65,6 @@ impl OssCadSuiteBackend {
             channel: None,
             backend: "oss-cad-suite".to_string(),
             sha256: String::new(),
-            explicit_urls: Vec::new(),
         })
     }
 

@@ -20,7 +20,6 @@ fn test_lockfile_find_package_found() {
         channel: Some("litex-hub".into()),
         backend: "micromamba".into(),
         sha256: String::new(),
-        explicit_urls: Vec::new(),
     });
     let pkg = lf.find_package("yosys");
     assert!(pkg.is_some());
@@ -36,7 +35,6 @@ fn test_lockfile_find_package_not_found() {
         channel: None,
         backend: "micromamba".into(),
         sha256: String::new(),
-        explicit_urls: Vec::new(),
     });
     assert!(lf.find_package("magic").is_none());
 }
@@ -59,7 +57,6 @@ fn test_write_and_read_roundtrip() {
         channel: Some("litex-hub".into()),
         backend: "micromamba".into(),
         sha256: "abc123".into(),
-        explicit_urls: Vec::new(),
     });
     lf.pdk.insert(
         "sky130".into(),
@@ -96,7 +93,6 @@ fn test_locked_package_serde() {
         channel: Some("conda-forge".into()),
         backend: "micromamba".into(),
         sha256: String::new(),
-        explicit_urls: Vec::new(),
     };
     let toml_str = toml::to_string_pretty(&pkg).unwrap();
     assert!(toml_str.contains("test"));
@@ -127,8 +123,7 @@ fn test_lockfile_multiple_packages() {
             channel: None,
             backend: "micromamba".into(),
             sha256: String::new(),
-            explicit_urls: Vec::new(),
-        });
+            });
     }
     assert_eq!(lf.package.len(), 5);
     assert!(lf.find_package("tool0").is_some());
@@ -155,7 +150,6 @@ fn test_package_channel_none() {
         channel: None,
         backend: "oss-cad-suite".into(),
         sha256: String::new(),
-        explicit_urls: Vec::new(),
     };
     let toml_str = toml::to_string_pretty(&pkg).unwrap();
     let parsed: LockedPackage = toml::from_str(&toml_str).unwrap();

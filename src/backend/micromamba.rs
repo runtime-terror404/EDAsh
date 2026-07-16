@@ -28,6 +28,7 @@ impl MicromambaBackend {
         &self,
         req: &PackageRequest,
         progress: ProgressTx,
+        lock_path: Option<&Path>,
     ) -> Result<LockedPackage, Box<dyn std::error::Error>> {
         let channel = req.channel.as_deref().unwrap_or("conda-forge");
         let package = req.package.as_deref().unwrap_or(&req.name);
@@ -36,39 +37,30 @@ impl MicromambaBackend {
         let exists = prefix.exists() && prefix.join("conda-meta").exists();
         let subcommand = if exists { "install" } else { "create" };
 
-        let output = if !req.explicit_urls.is_empty() {
-            // Path A: explicit URLs — write to temp file, fetch directly, no solver
+        let output = if let Some(lp) = lock_path {
+            // Path A: explicit lock file — micromamba reads it directly, no parsing
             let _ = progress.send(Progress::Stage(format!(
-                "fetch:{} <- explicit lock ({} urls)",
-                req.name,
-                req.explicit_urls.len()
+                "fetch:{} <- lock file",
+                req.name
             )));
-            let tmpdir = std::env::temp_dir().join(format!("edash_lock_{}", req.name));
-            std::fs::create_dir_all(&tmpdir)?;
-            let lock_file = tmpdir.join("explicit.txt");
-            std::fs::write(&lock_file, req.explicit_urls.join("\n") + "\n")?;
-
-            let result = Command::new(&self.binary)
+            Command::new(&self.binary)
                 .args([
                     subcommand,
                     "-p",
                     &prefix.to_string_lossy(),
                     "--file",
-                    &lock_file.to_string_lossy(),
+                    &lp.to_string_lossy(),
                     "-y",
                     "--quiet",
                 ])
                 .output()
-                .map_err(|e| format!("failed to run micromamba: {}", e));
-            let _ = std::fs::remove_dir_all(&tmpdir);
-            result?
+                .map_err(|e| format!("failed to run micromamba: {}", e))?
         } else {
             // Path B: spec-based — hermetic solver with controlled baseline
             let _ = progress.send(Progress::Stage(format!(
                 "{}:{} <- {}::{}",
                 subcommand, req.name, channel, package
             )));
-
             Command::new(&self.binary)
                 .args([
                     subcommand,
@@ -100,7 +92,6 @@ impl MicromambaBackend {
             channel: Some(channel.to_string()),
             backend: "micromamba".to_string(),
             sha256: String::new(),
-            explicit_urls: req.explicit_urls.clone(),
         })
     }
 
