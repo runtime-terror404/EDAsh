@@ -78,8 +78,8 @@ edash itself is a single static binary. At runtime it needs:
 
 | Dependency    | Required for                                      | Auto-installed?               |
 | ------------- | ------------------------------------------------- | ----------------------------- |
-| `micromamba`  | Conda-based tools (openroad, magic, xschem, etc.) | Offered on first use          |
-| `ciel`        | PDK installation                                  | No — `pip install ciel`       |
+| `micromamba`  | Conda-based tools (openroad, magic, xschem, etc.) | Show hint during installation |
+| `ciel`        | PDK installation                                  | Show hint during installation |
 | `curl`, `tar` | OSS CAD Suite, self-updates                       | Expected on all Linux systems |
 
 ## Usage
@@ -142,6 +142,15 @@ edash pdk sky130         # show paths and per-tool usage
 ```bash
 eval "$(edash env digital)"   # export vars in current shell
 edash shell digital           # spawn a subshell with MOTD
+```
+
+## Uninstall
+
+```bash
+edash remove digital analog    # removes all tools (shared tools kept)
+edash remove pdks              # removes all PDKs
+rm -rf ~/.local/share/edash    # removes all edash data
+rm ~/.local/bin/edash          # removes the binary
 ```
 
 ## Tools

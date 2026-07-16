@@ -75,7 +75,8 @@ edash/
 │   ├── tools.yaml                 # Flat tool registry (single source of truth)
 │   ├── digital.yaml               # ASIC backend + synthesis + FPGA + formal tools
 │   ├── analog.yaml                # Analog design tools
-│   └── pdks/
+│   ├── pdks/
+│   └── locks/                     # Per-tool explicit URL lock files (CI-generated)
 │       ├── sky130.yaml            # SKY130 PDK paths
 │       ├── gf180.yaml             # GF180MCU PDK paths
 │       └── ihp-sg13g2.yaml        # IHP SG13G2 PDK paths
@@ -182,6 +183,14 @@ sha256 = ""
 
 The lockfile is the system's source of truth for idempotency — `install` checks it first and skips if a package is already recorded and present on disk. `remove` prunes entries. All other commands read it.
 
+### Explicit URL locks
+
+To avoid conda solver variance across distros, micromamba tools ship with pre-computed dependency locks. These are `@EXPLICIT`-format files at `catalog/locks/<tool>.explicit.txt` listing exact download URLs with build hashes — generated once in CI on Ubuntu 22.04 (glibc 2.35 baseline) and shipped in the catalog tarball.
+
+At install time, if a lock file exists for the tool, micromamba fetches URLs directly via `--file` — no solver runs on the user's machine. If no lock exists (user-added tools, PDKs), install falls back to a hermetic spec-based path with `--override-channels --strict-channel-priority` and `CONDA_OVERRIDE_GLIBC=2.35`.
+
+This ensures the same dependency closure on Arch, Ubuntu 22.04/24.04/26.04, Debian, and any other glibc ≥2.35 system.
+
 ### Actions
 
 `src/actions.rs` is the shared orchestrator between CLI and TUI. Every install and remove operation — whether triggered by `edash install digital` or pressing `i` in the TUI — goes through the same functions:
@@ -261,7 +270,8 @@ The TUI receives a `CatalogSource` and passes it through to the resolver and spa
 │       ├── tools.yaml
 │       ├── digital.yaml
 │       ├── analog.yaml
-│       └── pdks/*.yaml
+│       ├── pdks/*.yaml
+│       └── locks/*.explicit.txt   # Pre-computed dependency locks (CI-generated)
 ├── envs/                       # Tool installations
 │   ├── _yosys/                 # Per-tool micromamba prefixes
 │   ├── _magic/

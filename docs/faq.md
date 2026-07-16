@@ -14,10 +14,10 @@ You don't need to know which backend a tool uses. `edash install digital` resolv
 
 Micromamba is a single static C++ binary (~25 MB, zero dependencies) — edash can fetch it to `~/.local/share/edash/bin/` with one `curl` call.
 
-Ciel is a Python package (`pip install ciel`). Auto-installing it would mean edash touches the user's Python environment — picking a pip, deciding between `--user`, a venv, or system-wide install. That's outside edash's scope. If ciel isn't found, edash prints the exact install command and exits:
+Ciel is a Python package (`pipx install ciel`). Auto-installing it would mean edash touches the user's Python environment — picking a pip, deciding between `--user`, a venv, or system-wide install. That's outside edash's scope. If ciel isn't found, edash prints the exact install command and exits:
 
 ```
-ciel not found. Install it: pip install --user ciel
+ciel not found. Install: pipx install ciel
 ```
 
 ## What's the difference between `edash env` and `edash shell`?
@@ -67,6 +67,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for detailed instructions.
 Partially. Once tools are installed and the OSS CAD Suite tarball is cached, most operations work without internet: `list`, `env`, `shell`, `doctor`, `why`, `remove`.
 
 What needs internet:
+
 - Installing new tools (micromamba needs channel access, OSS CAD Suite checks for new releases)
 - `edash update` and `edash outdated`
 - PDK installs (ciel fetches from GitHub)
@@ -111,13 +112,10 @@ edash remove digital analog    # removes all tools (shared tools protected)
 edash remove pdks              # removes all PDKs
 rm -rf ~/.local/share/edash    # removes all edash data
 rm ~/.local/bin/edash          # removes the binary
+```
 
 ## Why do some tools fail to install on newer Ubuntu?
 
-Some conda packages from litex-hub and vlsida-eda channels are built against specific library versions (glibc, libzlib, hdf5, gtk3). On newer distro releases (Ubuntu 26.04+) the system libraries may be incompatible with what the channel packages expect, causing `libmamba Could not solve for environment specs` errors.
+edash ships pre-computed explicit URL locks generated on Ubuntu 22.04 (glibc 2.35). Tools with a lock file install via direct URL fetch — the conda solver never runs, so distro-specific library versions don't affect resolution. This covers 7 of 8 micromamba tools (xschem, ngspice, xyce, openroad, magic, klayout, netgen).
 
-This is a packaging issue in the conda channel, not an edash bug. Workarounds:
-- Use Ubuntu 22.04 or 24.04 (tested and working)
-- Try installing individual tools instead of the full environment — some tools may resolve while others don't
-- Contact the channel maintainer if a package consistently fails
-```
+If a tool has no lock file (user-added tools, or gaw which is known-broken on the `edash` channel), the fallback uses hermetic solver flags (`--override-channels --strict-channel-priority` + `CONDA_OVERRIDE_GLIBC=2.35`) that isolate it from the host's conda config and system library versions.
