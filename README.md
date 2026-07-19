@@ -33,6 +33,8 @@ edash doctor digital
 edash
 ```
 
+![Demo](assets/demo.gif)
+
 ## What it does
 
 edash installs and manages EDA tools the way rustup manages Rust toolchains: one command, reproducible across machines, no system package manager involved. It wraps existing distributors instead of replacing them — micromamba for conda packages, OSS CAD Suite for FPGA/formal tools, and ciel for PDKs.
