@@ -446,12 +446,18 @@ impl CatalogScreen {
             let is_cursor = cursor_visible && original_idx == cursor && self.focus == CatalogFocus::Results;
             let prefix = if is_cursor { "▸" } else { " " };
             let row_style = if is_cursor { Style::new().fg(CYAN) } else { Style::new() };
+            // Check if this PDK is in the download queue
+            let active_status = if self.downloads.iter().any(|d| d.name.as_str() == name.as_str() && d.progress < 100) {
+                "◐ installing"
+            } else {
+                status.as_str()
+            };
             Row::new(vec![
                     Cell::from(prefix.to_string()),
                     Cell::from(name.clone()),
                     Cell::from(variant.clone()),
                     Cell::from("ciel".to_string()),
-                    Cell::from(widgets::status_span(status.as_str())),
+                    Cell::from(widgets::status_span(active_status)),
                 ])
                 .style(row_style)
             })
@@ -603,7 +609,7 @@ impl CatalogScreen {
                         if self.sidebar_idx < env_count {
                             Some(CatalogAction::InstallEnv(self.envs[self.sidebar_idx].clone()))
                         } else if self.sidebar_idx == env_count {
-                            self.pdks.get(self.pdk_idx).map(|(name, _, _)| CatalogAction::InstallPdk(name.clone()))
+                            Some(CatalogAction::InstallAllPdks)
                         } else {
                             None
                         }
@@ -732,6 +738,7 @@ pub enum CatalogAction {
     InstallEnv(String),
     InstallTool(String),
     InstallPdk(String),
+    InstallAllPdks,
     RemoveEnv(String),
     RemoveTool(String),
     RemovePdk(String),

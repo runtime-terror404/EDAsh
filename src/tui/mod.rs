@@ -332,9 +332,51 @@ fn apply_action(app: &mut App, action: CatalogAction, source: &CatalogSource) {
             spawn_install(app, &name, source);
         }
         CatalogAction::InstallPdk(name) => {
+            // Skip if already installed
+            let lock_path = crate::paths::lockfile_path();
+            let already_installed = lock_path.exists() && {
+                crate::lockfile::writer::read_lockfile(&lock_path)
+                    .map(|lf| lf.pdk.contains_key(&name))
+                    .unwrap_or(false)
+            };
+            if already_installed {
+                app.msg = format!("PDK '{}' is already installed", name);
+                app.msg_ticks = 40;
+                return;
+            }
+            // Skip if already queued
+            if app.downloads.lock().unwrap().iter().any(|d| d.name == name && d.progress < 100) {
+                app.msg = format!("PDK '{}' is already in queue", name);
+                app.msg_ticks = 40;
+                return;
+            }
             app.msg = format!("Installing PDK {}...", name);
             app.msg_ticks = 80;
+            // spawn_pdk_install handles the download queue push
             spawn_pdk_install(app, &name, source);
+        }
+        CatalogAction::InstallAllPdks => {
+            let lock_path = crate::paths::lockfile_path();
+            let installed: Vec<String> = if lock_path.exists() {
+                crate::lockfile::writer::read_lockfile(&lock_path)
+                    .map(|lf| lf.pdk.keys().cloned().collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let to_install: Vec<String> = app.catalog.pdks.iter()
+                .map(|(name, _, _)| name.clone())
+                .filter(|n| !installed.contains(n))
+                .collect();
+            if to_install.is_empty() {
+                app.msg = "All PDKs are already installed".into();
+                app.msg_ticks = 40;
+            } else {
+                for name in &to_install {
+                    // spawn_pdk_install handles the download queue push
+                    spawn_pdk_install(app, name, source);
+                }
+            }
         }
         CatalogAction::RemoveEnv(name) => {
             let tool_names = resolve_tool_names(&app.resolver, &name);
